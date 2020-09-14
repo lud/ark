@@ -1,17 +1,9 @@
 defmodule Ark.Ok do
-  defmacro __using__(_) do
-    quote do
-      import unquote(__MODULE__)
-    end
-  end
-
   defmodule UnwrapError do
     defexception [:message]
   end
 
   @doc false
-  def __ark__(:alias), do: :ok
-
   def __ark__(:doc) do
     """
     This module provides function to work with ok/error tuples.

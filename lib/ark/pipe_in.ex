@@ -1,4 +1,5 @@
 defmodule Ark.PipeIn do
+  @doc false
   defmacro __using__(_) do
     quote do
       import unquote(__MODULE__), only: [~>: 2]
@@ -6,12 +7,19 @@ defmodule Ark.PipeIn do
   end
 
   @doc false
-  def __ark__(:alias), do: :pipe_in
-
   def __ark__(:doc) do
     """
     This module provides a macro to set a variable from the end of a
     pipe.
+
+    ```
+    use Ark.PipeIn
+
+    :val
+    |> Atom.to_string()
+    |> String.upcase()
+    ~> my_value
+    ```
     """
   end
 

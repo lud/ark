@@ -1,6 +1,7 @@
 defmodule Ark.PipeInTest do
   use ExUnit.Case, async: true
-  use Ark
+  use Ark.PipeIn
+  import Ark.Ok
   doctest Ark.PipeIn
 
   test "Can pipe in a variable" do

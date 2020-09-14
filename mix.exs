@@ -20,7 +20,10 @@ defmodule Ark.MixProject do
   end
 
   def application do
-    []
+    case Mix.env() do
+      :test -> [extra_applications: [:logger]]
+      _ -> []
+    end
   end
 
   def package() do
