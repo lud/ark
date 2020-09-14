@@ -19,6 +19,10 @@ defmodule Ark.PipeIn do
     |> Atom.to_string()
     |> String.upcase()
     ~> my_value
+
+    IO.inspect(my_value, label: "my_value")
+
+    # my_value: "VAL"
     ```
     """
   end

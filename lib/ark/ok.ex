@@ -13,10 +13,9 @@ defmodule Ark.Ok do
   @doc """
   Wrapping ok.
 
-  Wraps the passed value in an `:ok` tuple if :
-  - The value is not already wrapped
-  - It is not an `{:error, ...}` tuple
-  - The value is not the single atom `:ok`
+  Converts a value to an `:ok` tuple, except when the value is:
+  - the single atom `:ok` or an `:ok` tuple
+  - the single atom `:error` or an `:error` tuple
   """
   def ok(value)
 
@@ -26,11 +25,14 @@ defmodule Ark.Ok do
   def ok(tuple) when elem(tuple, 0) in [:ok, :error],
     do: tuple
 
+  def ok(:error),
+    do: :error
+
   def ok(val),
     do: {:ok, val}
 
   @doc """
-  `ẁok` is an alias of wrapping function `:ok`.
+  `wok` is an alias of wrapping function `:ok`.
   """
   def wok(value),
     do: ok(value)
@@ -40,7 +42,13 @@ defmodule Ark.Ok do
 
   Unwraps an `{:ok, val}` tuple, giving only the value, returning anything else
   as-is. Does not unwrap `{:error, ...}` tuples.
+
+  This function should not be used as it leads to ambiguous code where errors
+  are still wrapped in tuples but values are "naked". A case pattern matching on
+  that type would be very unusual in Elixir/Erlang. Match on the original value
+  or use `uok!/1`.
   """
+  @deprecated "Match on the values or use the raising version uok!/1"
   def uok(value)
 
   def uok({:ok, val}),
@@ -70,10 +78,10 @@ defmodule Ark.Ok do
   @doc """
   Questionning ok.
 
-  Returns true if the value is an `{:ok, val}` tuple or the single
-  atom `:ok`. 
+  Returns `true` if the value is an `{:ok, val}` tuple or the single
+  atom `:ok`.
 
-  Returns false otherwise.
+  Returns `false` otherwise.
   """
   def ok?(value)
 

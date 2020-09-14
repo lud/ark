@@ -15,5 +15,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Added a first prototype for `Ark.PubSup`, a mico pub-sub systems for processes
-  cooperating under a common supervisor.
+- Added a first prototype for `Ark.PubSub`, a mico pub-sub system.

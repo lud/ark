@@ -36,4 +36,15 @@ defmodule Ark.PipeInTest do
     assert :test = v1
     assert "{:ok, :test}" = v2
   end
+
+  test "doc test" do
+    use Ark.PipeIn
+
+    :val
+    |> Atom.to_string()
+    |> String.upcase()
+    ~> my_value
+
+    IO.inspect(my_value, label: "my_value")
+  end
 end
