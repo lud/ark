@@ -9,7 +9,7 @@ defmodule Ark.MixProject do
   def project do
     [
       app: :ark,
-      version: "0.4.2",
+      version: "0.5.0",
       elixir: "~> 1.9",
       start_permanent: false,
       deps: deps(),
@@ -21,7 +21,7 @@ defmodule Ark.MixProject do
 
   def application do
     case Mix.env() do
-      :test -> [extra_applications: [:logger]]
+      :test -> [extra_applications: [:sasl, :logger]]
       _ -> []
     end
   end
