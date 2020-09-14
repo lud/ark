@@ -9,12 +9,13 @@ defmodule Ark.MixProject do
   def project do
     [
       app: :ark,
-      version: "0.5.0",
+      version: "0.5.1",
       elixir: "~> 1.9",
       start_permanent: false,
       deps: deps(),
       description: @description,
       package: package(),
+      source_url: "https://github.com/lud/ark",
       docs: [main: "Ark"]
     ]
   end
