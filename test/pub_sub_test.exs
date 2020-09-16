@@ -1,4 +1,4 @@
-defmodule Ark.PupSubTest do
+defmodule Ark.PubSubTest do
   use ExUnit.Case, async: false
   alias Ark.PubSub
   alias Ark.PubSub.Group
@@ -36,6 +36,87 @@ defmodule Ark.PupSubTest do
     :ok = PubSub.publish(ps, :topic_1, :hello)
     refute_receive {PubSub, :topic_1, :hello}
     refute_receive {PubSub, :TOPIC_1, :hello}
+  end
+
+  test "traping exits and linking processes" do
+    # We will test that when subscribing with the link option, if the PubSub
+    # server terminates, a linked process will terminate (at least if it is not)
+    # trapping exits. But if the subscriber terminates, the PubSub server will
+    # stay alive (as it is trapping exits).
+    {:ok, ps} = PubSub.start()
+    topic = :killer_topic
+
+    start_child = fn ->
+      simple_child(
+        fn ->
+          PubSub.subscribe(ps, topic, tag: :pubsub, link: true)
+          nil
+        end,
+        # we will keep the last value as state
+        fn state, next ->
+          receive do
+            {:pubsub, topic, value} ->
+              IO.puts("[#{topic}]: #{inspect(value)}")
+              next.(value)
+
+            {:get_last, from} ->
+              send(from, {:last, state})
+              next.(state)
+          end
+        end
+      )
+    end
+
+    child1 = start_child.()
+    PubSub.publish(ps, topic, :hello)
+    send(child1, {:get_last, self})
+    assert_receive {:last, :hello}
+    # Kill the child. The PS server must still be alive
+    exit_sync(child1, :kill)
+    refute Process.alive?(child1)
+    assert Process.alive?(ps)
+
+    child2 = start_child.()
+    PubSub.publish(ps, topic, :hi!)
+    send(child2, {:get_last, self})
+    assert_receive {:last, :hi!}
+    # Kill the child. The PS server must still be alive
+    exit_sync(ps, :kill)
+    refute Process.alive?(child2)
+    refute Process.alive?(ps)
+  end
+
+  defp simple_child(init, loop) when is_function(init, 0) and is_function(loop, 2) do
+    parent = self
+    ref = make_ref
+
+    pid =
+      spawn(fn ->
+        state = init.()
+        send(parent, {:ack, ref})
+        simple_child_loop(state, loop)
+      end)
+
+    receive do
+      {:ack, ^ref} -> pid
+    after
+      1000 -> exit(:could_not_start_simple_child)
+    end
+  end
+
+  defp simple_child_loop(state, loop) do
+    loop.(state, fn state -> simple_child_loop(state, loop) end)
+  end
+
+  defp exit_sync(pid, reason) do
+    ref = Process.monitor(pid)
+    Process.exit(pid, reason)
+
+    receive do
+      {:DOWN, _, :process, ^pid, _} -> :ok
+    after
+      1000 -> exit({:could_not_exit_sync, pid, reason})
+    end
   end
 
   # Utility code to test the group system

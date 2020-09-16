@@ -38,12 +38,21 @@ defmodule Ark.PubSub do
 
   @impl GenServer
   def init(_) do
+    # We will trap exits so clients can be linked to us (on demand) and exit
+    # if their source of events (us) goes down.
+    Process.flag(:trap_exit, true)
     {:ok, %{}}
   end
 
   @impl GenServer
   def handle_call({:subscribe, client, topic, opts}, from, state) do
     GenServer.reply(from, :ok)
+
+    # On demand, we will link to the client process and make it exit if we exit.
+    if opts[:link] do
+      Process.link(client)
+    end
+
     sub = rsub(pid: client, tag: opts[:tag] || __MODULE__)
 
     subs =
@@ -52,7 +61,7 @@ defmodule Ark.PubSub do
         _ -> []
       end
 
-    state = Map.put(state, topic, add_subscription(subs, sub))
+    state = Map.put(state, topic, add_subscription(subs, sub, opts[:link] || false))
     {:noreply, state}
   end
 
@@ -73,12 +82,14 @@ defmodule Ark.PubSub do
 
   @impl GenServer
   def handle_info({:DOWN, _, :process, pid, _}, state) do
-    # A child is dead, we must remove it from all our topics.
-    state = clear_pid(state, pid)
-    {:noreply, state}
+    {:noreply, clear_pid(state, pid)}
   end
 
-  defp add_subscription(subs, sub, monitored? \\ false)
+  def handle_info({:EXIT, pid, _}, state) do
+    {:noreply, clear_pid(state, pid)}
+  end
+
+  defp add_subscription(subs, sub, monitored?)
 
   # We foud the exact same subscription, we ignore the add
   defp add_subscription([sub | _] = list, sub, _),
