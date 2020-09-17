@@ -41,7 +41,7 @@ defmodule Ark.PubSub do
     # We will trap exits so clients can be linked to us (on demand) and exit
     # if their source of events (us) goes down.
     Process.flag(:trap_exit, true)
-    {:ok, %{}}
+    {:ok, %{topic2subs: %{}, properties: %{}}}
   end
 
   @impl GenServer
@@ -53,24 +53,41 @@ defmodule Ark.PubSub do
       Process.link(client)
     end
 
+    # Create the subscription data
     sub = rsub(pid: client, tag: opts[:tag] || __MODULE__)
 
+    # If the topic is a property, we will immediately send the current value.
+    # Note we send the full :property tuple as the topic, since it IS the topic.
+    case topic do
+      {:property, key} -> send_event(sub, topic, state.properties[key])
+      _ -> :ok
+    end
+
+    # Add the subscription in the list for the given topic
     subs =
-      case state do
+      case state.topic2subs do
         %{^topic => subs} -> subs
         _ -> []
       end
 
-    state = Map.put(state, topic, add_subscription(subs, sub, opts[:link] || false))
+    state = put_in(state.topic2subs[topic], add_subscription(subs, sub, opts[:link] || false))
+
     {:noreply, state}
   end
 
   def handle_call({:publish, topic, value}, from, state) do
     GenServer.reply(from, :ok)
 
-    state
+    state.topic2subs
     |> Map.get(topic, [])
-    |> Enum.map(fn rsub(pid: pid, tag: tag) -> send(pid, {tag, topic, value}) end)
+    |> Enum.map(fn sub -> send_event(sub, topic, value) end)
+
+    # If the topic is a property, we will store the property key in the state
+    state =
+      case topic do
+        {:property, key} -> put_in(state.properties[key], value)
+        _ -> state
+      end
 
     {:noreply, state}
   end
@@ -88,6 +105,9 @@ defmodule Ark.PubSub do
   def handle_info({:EXIT, pid, _}, state) do
     {:noreply, clear_pid(state, pid)}
   end
+
+  defp send_event(rsub(pid: pid, tag: tag), topic, value),
+    do: send(pid, {tag, topic, value})
 
   defp add_subscription(subs, sub, monitored?)
 
@@ -108,12 +128,15 @@ defmodule Ark.PubSub do
     [sub]
   end
 
-  defp clear_pid(state, pid) do
-    for {topic, subs} <- state, into: %{} do
-      subs = Enum.filter(subs, fn rsub(pid: p) -> p != pid end)
+  defp clear_pid(%{topic2subs: t2s} = state, pid) do
+    new_t2s =
+      for {topic, subs} <- t2s, into: %{} do
+        subs = Enum.filter(subs, fn rsub(pid: p) -> p != pid end)
 
-      {topic, subs}
-    end
+        {topic, subs}
+      end
+
+    %{state | topic2subs: new_t2s}
   end
 
   defmodule Group do

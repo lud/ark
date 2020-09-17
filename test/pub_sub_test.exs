@@ -38,6 +38,18 @@ defmodule Ark.PubSubTest do
     refute_receive {PubSub, :TOPIC_1, :hello}
   end
 
+  test "can clear process subscriptions" do
+    topic = :clearable
+    {:ok, ps} = PubSub.start_link()
+    assert :ok = PubSub.subscribe(ps, topic)
+    assert :ok = PubSub.publish(ps, topic, :hello)
+    assert_receive {PubSub, ^topic, :hello}
+
+    PubSub.clear(ps)
+    assert :ok = PubSub.publish(ps, topic, :hi!)
+    refute_receive {PubSub, ^topic, :hi1}
+  end
+
   test "traping exits and linking processes" do
     # We will test that when subscribing with the link option, if the PubSub
     # server terminates, a linked process will terminate (at least if it is not)
@@ -55,8 +67,7 @@ defmodule Ark.PubSubTest do
         # we will keep the last value as state
         fn state, next ->
           receive do
-            {:pubsub, topic, value} ->
-              IO.puts("[#{topic}]: #{inspect(value)}")
+            {:pubsub, ^topic, value} ->
               next.(value)
 
             {:get_last, from} ->
@@ -69,26 +80,88 @@ defmodule Ark.PubSubTest do
 
     child1 = start_child.()
     PubSub.publish(ps, topic, :hello)
-    send(child1, {:get_last, self})
+    send(child1, {:get_last, self()})
     assert_receive {:last, :hello}
     # Kill the child. The PS server must still be alive
-    exit_sync(child1, :kill)
+    kill_sync(child1)
     refute Process.alive?(child1)
     assert Process.alive?(ps)
 
     child2 = start_child.()
     PubSub.publish(ps, topic, :hi!)
-    send(child2, {:get_last, self})
+    send(child2, {:get_last, self()})
     assert_receive {:last, :hi!}
-    # Kill the child. The PS server must still be alive
-    exit_sync(ps, :kill)
+    # Kill the child. The PS server must still be alive.
+    # We will kill it from a spawned process and not the test process which is
+    # the ancestor (this is a special case)
+    killer = spawn(fn -> kill_sync(ps) end)
+    # await the killer
+    await_down(killer)
     refute Process.alive?(child2)
     refute Process.alive?(ps)
   end
 
+  test "properties are persisting events" do
+    # When subscribing to a property, the last value of the property is
+    # immediately published to the subscriber.
+    # A property is simply an event where the topic is a 2-tuple tagged with
+    # `:property`, i.e {:property, :my_topic}
+    {:ok, ps} = PubSub.start_link()
+
+    prop = {:property, :my_prop}
+    topic = :some_topic
+
+    parent = self()
+    # Child will subscribe to the property and the topic. It will simply relay
+    # all messages to the test process
+    create_child = fn ->
+      simple_child(
+        fn ->
+          :ok = PubSub.subscribe(ps, prop, tag: :pubsub)
+          :ok = PubSub.subscribe(ps, topic, tag: :pubsub)
+          nil
+        end,
+        # we will keep the last value as state
+        fn state, next ->
+          receive do
+            {:pubsub, topic, value} ->
+              send(parent, {self(), topic, value})
+              next.(state)
+
+            msg ->
+              IO.puts("Unexpected msg: #{inspect(msg)}")
+              next.(state)
+          end
+        end
+      )
+    end
+
+    # So now we create the first child. It should report only the property with
+    # a nil value since it has never been published yet.
+    child1 = create_child.()
+
+    # property is nil, topic is not persisted (refute)
+    assert_receive {^child1, ^prop, nil}
+    refute_receive {^child1, ^topic, _}
+
+    # now we publish on the two topics
+    PubSub.publish(ps, prop, :propval)
+    PubSub.publish(ps, topic, :topicval)
+    assert_receive {^child1, ^prop, :propval}
+    assert_receive {^child1, ^topic, :topicval}
+
+    # Kill the child and start another one
+    kill_sync(child1)
+    child2 = create_child.()
+    # This time the child should receive the last property value upon
+    # subscription, but no message for the normal topic.
+    assert_receive {^child2, ^prop, :propval}
+    refute_receive {^child2, ^topic, _}
+  end
+
   defp simple_child(init, loop) when is_function(init, 0) and is_function(loop, 2) do
-    parent = self
-    ref = make_ref
+    parent = self()
+    ref = make_ref()
 
     pid =
       spawn(fn ->
@@ -108,14 +181,24 @@ defmodule Ark.PubSubTest do
     loop.(state, fn state -> simple_child_loop(state, loop) end)
   end
 
-  defp exit_sync(pid, reason) do
+  defp kill_sync(pid) do
     ref = Process.monitor(pid)
-    Process.exit(pid, reason)
+    Process.exit(pid, :kill)
 
     receive do
-      {:DOWN, _, :process, ^pid, _} -> :ok
+      {:DOWN, ^ref, :process, ^pid, _} -> :ok
     after
-      1000 -> exit({:could_not_exit_sync, pid, reason})
+      1000 -> exit({:could_not_kill_sync, pid})
+    end
+  end
+
+  defp await_down(pid) do
+    ref = Process.monitor(pid)
+
+    receive do
+      {:DOWN, ^ref, :process, ^pid, _} -> :ok
+    after
+      1000 -> exit({:process_is_not_DOWN, pid})
     end
   end
 
@@ -139,10 +222,10 @@ defmodule Ark.PubSubTest do
       |> Enum.member?(msg)
     end
 
-    def init([name]) do
+    def init([_name]) do
       Group.subscribe(:init_test_topic, async: true, tag: :pubsub)
       Group.subscribe(:counter, async: true, tag: :pubsub)
-      Logger.debug("Subscribed child #{name}: #{inspect(self())}")
+      # Logger.debug("Subscribed child #{name}: #{inspect(self())}")
 
       {:ok, []}
     end
@@ -155,7 +238,7 @@ defmodule Ark.PubSubTest do
     # handled like any other and verifiables with check/1-2.
     # With more than 1 running GenServer, each message will be multiplied by
     # the amount of gen servers, this will lead to a LOT of messages.
-    def handle_info({:pubsub, :counter, n} = msg, msgs) when is_integer(n) and n < 4 do
+    def handle_info({:pubsub, :counter, n}, msgs) when is_integer(n) and n < 4 do
       Group.publish(:counter, n + 1)
       {:noreply, msgs}
     end
@@ -165,7 +248,6 @@ defmodule Ark.PubSubTest do
     end
 
     def handle_info({:pubsub, topic, msg}, msgs) do
-      Logger.warn("received: #{inspect({topic, msg})}")
       {:noreply, [{topic, msg} | msgs]}
     end
 
