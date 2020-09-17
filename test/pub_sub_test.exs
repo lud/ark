@@ -38,6 +38,49 @@ defmodule Ark.PubSubTest do
     refute_receive {PubSub, :TOPIC_1, :hello}
   end
 
+  test "cannot have duplicate subscriptions" do
+    topic = :dupes
+    {:ok, ps} = PubSub.start_link()
+    assert :ok = PubSub.subscribe(ps, topic, tag: :tag_dup)
+    assert :ok = PubSub.subscribe(ps, topic, tag: :tag_dup)
+    assert :ok = PubSub.subscribe(ps, topic, tag: :other)
+
+    PubSub.publish(ps, topic, :hello)
+
+    # Receive tagged with :tag_dup only once
+    assert_receive {:tag_dup, ^topic, :hello}
+    refute_receive {:tag_dup, ^topic, :hello}
+
+    # Still receive tagged with :other tag
+    assert_receive {:other, ^topic, :hello}
+  end
+
+  test "unsubscribe" do
+    topic = :unsub
+    {:ok, ps} = PubSub.start_link()
+    assert :ok = PubSub.subscribe(ps, topic, tag: :tag_1)
+    assert :ok = PubSub.subscribe(ps, topic, tag: :tag_2)
+    assert :ok = PubSub.subscribe(ps, topic)
+
+    PubSub.publish(ps, topic, :hello)
+    assert_receive {:tag_1, ^topic, :hello}
+    assert_receive {:tag_2, ^topic, :hello}
+    assert_receive {PubSub, ^topic, :hello}
+
+    # unsubscribe with tag
+    assert :ok = PubSub.unsubscribe(ps, topic, :tag_1)
+    PubSub.publish(ps, topic, :hello)
+    assert_receive {:tag_2, ^topic, :hello}
+    assert_receive {PubSub, ^topic, :hello}
+    refute_receive {:tag_1, ^topic, :hello}
+
+    # unsubscribe the default tag
+    assert :ok = PubSub.unsubscribe(ps, topic)
+    assert :ok = PubSub.publish(ps, topic, :hi!)
+    assert_receive {:tag_2, ^topic, _}
+    refute_receive {_, ^topic, _}
+  end
+
   test "can clear process subscriptions" do
     topic = :clearable
     {:ok, ps} = PubSub.start_link()
@@ -61,7 +104,7 @@ defmodule Ark.PubSubTest do
     start_child = fn ->
       simple_child(
         fn ->
-          PubSub.subscribe(ps, topic, tag: :pubsub, link: true)
+          PubSub.subscribe(ps, topic, tag: :pubsub)
           nil
         end,
         # we will keep the last value as state
@@ -157,6 +200,10 @@ defmodule Ark.PubSubTest do
     # subscription, but no message for the normal topic.
     assert_receive {^child2, ^prop, :propval}
     refute_receive {^child2, ^topic, _}
+
+    # nil is a valid value. We test the cleanup server-side
+    PubSub.publish(ps, prop, nil)
+    assert_receive {^child2, ^prop, nil}
   end
 
   defp simple_child(init, loop) when is_function(init, 0) and is_function(loop, 2) do
