@@ -104,10 +104,6 @@ defmodule Ark.PubSub do
   end
 
   @impl GenServer
-  def handle_info({:DOWN, _, :process, pid, _}, state) do
-    {:noreply, clear_pid(state, pid), @cleanup_timeout}
-  end
-
   def handle_info({:EXIT, pid, _}, state) do
     {:noreply, clear_pid(state, pid), @cleanup_timeout}
   end
@@ -199,6 +195,8 @@ defmodule Ark.PubSub do
 end
 
 defmodule Ark.PubSub.Group do
+  # This feature is not public, and is likely to be removed
+  @moduledoc false
   @group_pid {__MODULE__, :group_pid}
   @mod inspect(__MODULE__)
 
