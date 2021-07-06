@@ -17,25 +17,25 @@ defmodule Ark.PubSubTest do
     refute_receive {PubSub, :topic_1, :hello}
 
     # subscribe with a different tag
-    :ok = PubSub.subscribe(ps, :topic_1, tag: :pubsub)
+    :ok = PubSub.subscribe(ps, :topic_1, tag: :my_tag)
     :ok = PubSub.publish(ps, :topic_1, :hello)
     assert_receive {PubSub, :topic_1, :hello}
     refute_receive {PubSub, :topic_1, :hello}
-    assert_receive {:pubsub, :topic_1, :hello}
+    assert_receive {:my_tag, :topic_1, :hello}
 
     # clear the subscriptions
     assert :ok = PubSub.clear(ps)
     :ok = PubSub.publish(ps, :topic_1, :hello)
     refute_receive {PubSub, :topic_1, :hello}
-    refute_receive {PubSub, :TOPIC_1, :hello}
+    refute_receive {:my_tag, :topic_1, :hello}
 
     # Obviously we should not receive any message for a different topic, even if
     # we use our subscribed topic as a tag
-    :ok = PubSub.subscribe(ps, :OTHER_TOPIC, tag: :pubsub)
-    :ok = PubSub.subscribe(ps, :OTHER_TOPIC, tag: :pubsub)
+    :ok = PubSub.subscribe(ps, :OTHER_TOPIC, tag: :my_tag)
+    :ok = PubSub.subscribe(ps, :OTHER_TOPIC, tag: :my_tag)
     :ok = PubSub.publish(ps, :topic_1, :hello)
     refute_receive {PubSub, :topic_1, :hello}
-    refute_receive {PubSub, :TOPIC_1, :hello}
+    refute_receive {:my_tag, :topic_1, :hello}
   end
 
   test "cannot have duplicate subscriptions" do
@@ -90,7 +90,7 @@ defmodule Ark.PubSubTest do
 
     PubSub.clear(ps)
     assert :ok = PubSub.publish(ps, topic, :hi!)
-    refute_receive {PubSub, ^topic, :hi1}
+    refute_receive {PubSub, ^topic, :hi!}
   end
 
   test "traping exits and linking processes" do
@@ -104,13 +104,13 @@ defmodule Ark.PubSubTest do
     start_child = fn ->
       simple_child(
         fn ->
-          PubSub.subscribe(ps, topic, tag: :pubsub)
+          PubSub.subscribe(ps, topic, tag: :my_tag)
           nil
         end,
         # we will keep the last value as state
         fn state, next ->
           receive do
-            {:pubsub, ^topic, value} ->
+            {:my_tag, ^topic, value} ->
               next.(value)
 
             {:get_last, from} ->
@@ -144,7 +144,7 @@ defmodule Ark.PubSubTest do
     refute Process.alive?(ps)
   end
 
-  test "properties are persisting events" do
+  test "properties are persistent events" do
     # When subscribing to a property, the last value of the property is
     # immediately published to the subscriber.
     # A property is simply an event where the topic is a 2-tuple tagged with
@@ -160,14 +160,14 @@ defmodule Ark.PubSubTest do
     create_child = fn ->
       simple_child(
         fn ->
-          :ok = PubSub.subscribe(ps, prop, tag: :pubsub)
-          :ok = PubSub.subscribe(ps, topic, tag: :pubsub)
+          :ok = PubSub.subscribe(ps, prop, tag: :my_tag)
+          :ok = PubSub.subscribe(ps, topic, tag: :my_tag)
           nil
         end,
         # we will keep the last value as state
         fn state, next ->
           receive do
-            {:pubsub, topic, value} ->
+            {:my_tag, topic, value} ->
               send(parent, {self(), topic, value})
               next.(state)
 
@@ -270,8 +270,8 @@ defmodule Ark.PubSubTest do
     end
 
     def init([_name]) do
-      Group.subscribe(:init_test_topic, async: true, tag: :pubsub)
-      Group.subscribe(:counter, async: true, tag: :pubsub)
+      Group.subscribe(:init_test_topic, async: true, tag: :my_tag)
+      Group.subscribe(:counter, async: true, tag: :my_tag)
       # Logger.debug("Subscribed child #{name}: #{inspect(self())}")
 
       {:ok, []}
@@ -285,7 +285,7 @@ defmodule Ark.PubSubTest do
     # handled like any other and verifiables with check/1-2.
     # With more than 1 running GenServer, each message will be multiplied by
     # the amount of gen servers, this will lead to a LOT of messages.
-    def handle_info({:pubsub, :counter, n}, msgs) when is_integer(n) and n < 4 do
+    def handle_info({:my_tag, :counter, n}, msgs) when is_integer(n) and n < 4 do
       Group.publish(:counter, n + 1)
       {:noreply, msgs}
     end
@@ -294,7 +294,7 @@ defmodule Ark.PubSubTest do
       {:noreply, [{topic, :"$subscribed"} | msgs]}
     end
 
-    def handle_info({:pubsub, topic, msg}, msgs) do
+    def handle_info({:my_tag, topic, msg}, msgs) do
       {:noreply, [{topic, msg} | msgs]}
     end
 
