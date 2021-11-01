@@ -66,8 +66,8 @@ defmodule Ark.DripNext do
     end
   end
 
-  def cancel(bucket, pid) when is_reference(pid) do
-    GenServer.cast(bucket, {:cancel, pid})
+  def cancel(bucket, ref) when is_reference(ref) do
+    GenServer.cast(bucket, {:cancel, ref})
   end
 
   defmodule S do
