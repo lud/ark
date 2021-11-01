@@ -12,13 +12,6 @@ defmodule Ark.DripNext do
 
   @moduledoc false
 
-  # New implementation based on a sliding time window.
-  #
-  # First implementation used a list of times for slots, then we used spawned
-  # processes to await the slots.
-  #
-  # Now we will simply use maths.
-
   def start_link(opts) do
     {gen_opts, opts} = normalize_opts(opts)
     GenServer.start_link(__MODULE__, opts, gen_opts)
