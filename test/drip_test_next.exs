@@ -1,6 +1,6 @@
 defmodule Ark.DripTest do
   use ExUnit.Case, async: true
-  alias Ark.Drip
+  alias Ark.DripNext, as: Drip
 
   defmodule H do
     def task(drip, id) do
@@ -38,45 +38,45 @@ defmodule Ark.DripTest do
   end
 
   test "drip" do
-    Drip.start_link([max_drips: 10, range_ms: 1000], name: __MODULE__.Drip)
-    t1 = :erlang.monotonic_time(:millisecond)
+    {:ok, pid} = Drip.start_link(max_drips: 4, range_ms: 1000)
+    t1 = :erlang.system_time(:millisecond)
 
     tasks =
-      for n <- 1..20 do
-        H.task(__MODULE__.Drip, n)
+      for n <- 1..8 do
+        H.task(pid, n)
       end
 
     IO.puts("awaiting")
     tasks |> Enum.map(&Task.await(&1, :infinity))
-    t2 = :erlang.monotonic_time(:millisecond)
-    # 20 drips at 10 per second should take at least 1 seconds
-    # but less thant 2 seconds, since at time 0 we can run 10 tasks,
-    # and at time 1 we can run the last 10
-    assert t2 - t1 > 1000 * (div(20, 10) - 1)
-    assert t2 - t1 < 1000 * div(20, 10)
+    t2 = :erlang.system_time(:millisecond)
+    # 8 drips at 4 per second should take at least 1 seconds
+    # but less thant 2 seconds, since at time 0 we can run 4 tasks,
+    # and at time 1 we can run the last 4
+    assert t2 - t1 > 1000
+    assert t2 - t1 < 2000
   end
 
   test "1 drip slow" do
-    Drip.start_link([max_drips: 1, range_ms: 1_000], name: __MODULE__.DripSlow)
+    Drip.start_link(max_drips: 1, range_ms: 1_000, name: __MODULE__.DripSlow)
     # The first call should be immediate and the second should wait
     # 1000 ms
-    t1 = :erlang.monotonic_time(:millisecond)
+    t1 = :erlang.system_time(:millisecond)
     H.task(__MODULE__.DripSlow, :slow_1) |> Task.await()
     H.task(__MODULE__.DripSlow, :slow_2) |> Task.await()
-    t2 = :erlang.monotonic_time(:millisecond)
+    t2 = :erlang.system_time(:millisecond)
     assert t2 - t1 > 1000
     assert t2 - t1 < 1100
     # If the Drip is idle (time is waited long before), the call should be
     # immediate, so we expect it took least than 10 ms
     Process.sleep(1_000)
-    t1 = :erlang.monotonic_time(:millisecond)
+    t1 = :erlang.system_time(:millisecond)
     H.task(__MODULE__.DripSlow, :slow_3) |> Task.await()
-    t2 = :erlang.monotonic_time(:millisecond)
+    t2 = :erlang.system_time(:millisecond)
     assert t2 - t1 < 10
   end
 
   test "drip timeout" do
-    {:ok, pid} = Drip.start_link([max_drips: 10, range_ms: 1000], name: nil)
+    {:ok, pid} = Drip.start_link(max_drips: 10, range_ms: 1000, name: nil)
 
     # Run different batches :
     # - batch 1 (20) with a timeout of 500 will have 10 tasks ok and 10 taks timeout
@@ -97,8 +97,8 @@ defmodule Ark.DripTest do
   end
 
   test "100 drips" do
-    Drip.start_link([max_drips: 10, range_ms: 100], name: __MODULE__.Drip)
-    t1 = :erlang.monotonic_time(:millisecond)
+    Drip.start_link(max_drips: 10, range_ms: 100, name: __MODULE__.Drip)
+    t1 = :erlang.system_time(:millisecond)
 
     tasks =
       for n <- 1..100 do
@@ -107,7 +107,7 @@ defmodule Ark.DripTest do
 
     IO.puts("awaiting")
     tasks |> Enum.map(&Task.await(&1, :infinity))
-    t2 = :erlang.monotonic_time(:millisecond)
+    t2 = :erlang.system_time(:millisecond)
 
     assert t2 - t1 > 900
     assert t2 - t1 < 1100
@@ -120,13 +120,12 @@ defmodule Ark.DripTest do
       |> IO.inspect()
       |> Enum.split_with(&Ark.Ok.ok?/1)
 
-    assert length(oks) == expected_ok
-    assert length(tos) == expected_timeout
+    assert %{oks: expected_ok, tos: expected_timeout} = %{oks: oks, tos: tos}
   end
 
   test "Drip under supervision" do
     children = [
-      {Ark.Drip, spec: {10, 1100}}
+      {Ark.DripNext, spec: {10, 1100}}
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
