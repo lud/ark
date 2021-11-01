@@ -58,59 +58,63 @@ defmodule Ark.DripNext do
   def await(bucket, timeout \\ :infinity)
 
   def await(bucket, :infinity) do
-    GenServer.call(bucket, :await, :infinity)
+    GenServer.call(bucket, {:await, make_ref()}, :infinity)
   end
 
-  IO.warn("""
-  use a ref alias instead of self() in order to cancel only the given drip. Even
-  though await() is blocking, it is more safe.
-  """)
-
   def await(bucket, timeout) do
+    ref = make_ref()
+
     try do
-      GenServer.call(bucket, :await, timeout)
+      GenServer.call(bucket, {:await, ref}, timeout)
     catch
       :exit, e ->
-        cancel(bucket, self())
+        cancel(bucket, ref)
         exit(e)
     end
   end
 
-  def cancel(bucket, pid) when is_pid(pid) do
+  def cancel(bucket, pid) when is_reference(pid) do
     GenServer.cast(bucket, {:cancel, pid})
   end
 
   defmodule S do
     @enforce_keys [
-      :current_drips,
+      # maximum drips for the time window
       :max_drips,
-      :unit_ms,
-      :offset,
-      :base_time,
+      # width of the time window
+      :range_ms,
+      # dispatched drips for the current window
+      :used,
+      # timestamp at which the next windows will start
+      :next_reset,
+      # a queue to buffer demands when there is no available drip
       :clients,
+      # a timestamp to remove from timed logs to get log time relative to the
+      # init() call
       :debug_offset
     ]
     defstruct @enforce_keys
   end
 
-  @doc false
+  @impl GenServer
   def init(opts) do
     with {:ok, opts} <- validate_opts(opts) do
       max_drips = Keyword.fetch!(opts, :max_drips)
       range_ms = Keyword.fetch!(opts, :range_ms)
-      offset = range_ms
+
+      # for each time window we send ourselves a reset
+      :timer.send_interval(range_ms, :reset, max_drips)
 
       state = %S{
-        current_drips: 0,
         max_drips: max_drips,
-        unit_ms: div(range_ms, max_drips),
-        offset: offset,
-        base_time: now_ms() - offset,
+        range_ms: range_ms,
+        used: 0,
+        next_reset: now_ms() + range_ms,
         clients: Q.new(),
-        debug_offset: now_ms()
+        debug_offset: now_ms() + range_ms
       }
 
-      {:ok, state}
+      {:ok, state, range_ms}
     end
   end
 
@@ -134,72 +138,51 @@ defmodule Ark.DripNext do
   end
 
   @impl GenServer
-  def handle_call(:await, from, state) do
-    {:noreply, enqueue_client(state, from), {:continue, :manage_queue}}
+  def handle_call({:await, _ref}, _from, %S{used: used, max_drips: max} = state)
+      when used < max do
+    {:reply, :ok, %S{state | used: used + 1}, next_timeout(state)}
+  end
+
+  def handle_call({:await, ref}, from, %S{} = state) do
+    state = enqueue_client(state, {from, ref})
+    {:noreply, state, next_timeout(state)}
   end
 
   @impl GenServer
-  def handle_info(:timeout, state) do
-    check_queue(state, "timeout")
+  def handle_info(:timeout, %S{} = state) do
+    # when starting a new window we will use the previous "next_reset" as "now".
+    # This will compensate for messaging and calculations (queuing, timeouts) by
+    # using slightly lesser windows
+    %S{range_ms: range_ms, next_reset: next_reset} = state
+    now = next_reset
+    next_reset = now + range_ms
+    state = %S{state | used: 0, next_reset: next_reset}
+    state = run_queue(state)
+    {:noreply, state, next_timeout(state)}
+  end
+
+  defp run_queue(%S{clients: q, used: used, max_drips: max} = state)
+       when used < max do
+    case Q.out(q) do
+      {:empty, _} ->
+        state
+
+      {{:value, {from, _}}, new_q} ->
+        GenServer.reply(from, :ok)
+        run_queue(%S{state | used: used + 1, clients: new_q})
+    end
+  end
+
+  defp run_queue(%S{} = state) do
+    state
   end
 
   @impl GenServer
-  def handle_continue(:manage_queue, state) do
-    check_queue(state, "continue")
-  end
-
-  def check_queue(state, check_reason) do
-    now = now_ms()
-    debug(state, now, check_reason)
-
-    if :queue.is_empty(state.clients) do
-      debug(state, now, "empty")
-      {:noreply, state}
-    else
-      # When requested for a drip, we will check if there is enough time between
-      # our base time and now to fit a drip.
-      #
-      # The base time is the time when all current drips are finished or the
-      # current time (now) minus the offset, whichever is highest.
-
-      base_time = max(now - state.offset, state.base_time)
-      debug(state, state.base_time, "base time")
-      manage_queue(state, {base_time, state.unit_ms, now}, Q.out(state.clients))
-    end
-  end
-
-  defp manage_queue(state, {base_time, unit_ms, now}, {{:value, client}, new_queue}) do
-    next_base_time = base_time + unit_ms
-
-    if next_base_time > now do
-      # the drip does not fit, we enqueue the client and keep our current base
-      # time.
-      timeout = next_base_time - now
-      # we must replace the client in the queue, at the front, when storing the
-      # new queue in state.
-      state = %S{state | clients: Q.in_r(client, new_queue)}
-      debug(state, now, "no fit, await #{timeout}")
-      {:noreply, state, timeout}
-    else
-      # the drip fits, we can tell our client and update our base time, then
-      # continue with the next in queue
-      debug(state, now, "* drip")
-      GenServer.reply(client, :ok)
-      # then we "consume" time by adding one range to the current base time.
-      # at some point it will be higher than "now" and we will stop
-      manage_queue(state, {next_base_time, unit_ms, now}, Q.out(new_queue))
-    end
-  end
-
-  defp manage_queue(state, {base_time, _, _}, {:empty, new_queue}) do
-    {:noreply, %S{state | clients: new_queue, base_time: base_time}}
-  end
-
-  def handle_cast({:cancel, pid}, state) do
+  def handle_cast({:cancel, ref}, %S{} = state) do
     clients =
       Q.filter(
         fn
-          {^pid, _} -> false
+          {_from, ^ref} -> false
           _ -> true
         end,
         state.clients
@@ -209,14 +192,13 @@ defmodule Ark.DripNext do
   end
 
   defp enqueue_client(state, client) do
-    %S{state | clients: Q.in(client, state.clients)}
+    q = Q.in(client, state.clients)
+    %S{state | clients: q}
   end
 
   def now_ms do
     :erlang.system_time(:millisecond)
   end
 
-  defp debug(%S{debug_offset: root}, at, reason) do
-    IO.puts("[debug] #{at - root}: #{reason}")
-  end
+  defp next_timeout(%{next_reset: next}), do: max(0, next - now_ms())
 end

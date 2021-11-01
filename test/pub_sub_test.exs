@@ -1,5 +1,5 @@
 defmodule Ark.PubSubTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
   alias Ark.PubSub
   alias Ark.PubSub.Group
 

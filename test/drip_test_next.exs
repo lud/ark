@@ -38,20 +38,20 @@ defmodule Ark.DripTest do
   end
 
   test "drip" do
-    {:ok, pid} = Drip.start_link(max_drips: 4, range_ms: 1000)
+    {:ok, pid} = Drip.start_link(max_drips: 10, range_ms: 1000)
     t1 = :erlang.system_time(:millisecond)
 
     tasks =
-      for n <- 1..8 do
+      for n <- 1..20 do
         H.task(pid, n)
       end
 
     IO.puts("awaiting")
     tasks |> Enum.map(&Task.await(&1, :infinity))
     t2 = :erlang.system_time(:millisecond)
-    # 8 drips at 4 per second should take at least 1 seconds
-    # but less thant 2 seconds, since at time 0 we can run 4 tasks,
-    # and at time 1 we can run the last 4
+    # 20 drips at 10 per second should take at least 1 seconds
+    # but less thant 2 seconds, since at time 0 we can run 10 tasks,
+    # and at time 1 we can run the last 10
     assert t2 - t1 > 1000
     assert t2 - t1 < 2000
   end
