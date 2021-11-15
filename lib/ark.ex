@@ -1,6 +1,7 @@
 defmodule Ark do
-  @plugins [Ark.Ok, Ark.PipeIn, Ark.Drip]
+  @plugins [Ark.Ok, Ark.PipeIn, Ark.Drip, Ark.StructAccess]
   @plugin_docs @plugins
+               |> Enum.sort()
                |> Enum.map(fn mod -> {mod, mod.__ark__(:doc)} end)
                |> Enum.map(fn {mod, plugin_doc} ->
                  """

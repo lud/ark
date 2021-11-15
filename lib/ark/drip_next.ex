@@ -145,7 +145,7 @@ defmodule Ark.DripNext do
   def handle_info(:timeout, %S{} = state) do
     # when starting a new window we will use the previous "next_reset" as "now".
     # This will compensate for messaging and calculations (queuing, timeouts) by
-    # using slightly lesser windows
+    # using slightly lesser wide windows.
     %S{range_ms: range_ms, next_reset: next_reset} = state
     now = next_reset
     next_reset = now + range_ms

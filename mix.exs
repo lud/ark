@@ -2,14 +2,14 @@ defmodule Ark.MixProject do
   use Mix.Project
 
   @description """
-  Ark is a collection of small utilities useful for prototyping, 
+  Ark is a collection of small utilities useful for prototyping,
   testing, and working with Elixir common patterns.
   """
 
   def project do
     [
       app: :ark,
-      version: "0.5.4",
+      version: "0.6.0",
       elixir: "~> 1.9",
       start_permanent: false,
       deps: deps(),
