@@ -41,4 +41,26 @@ defmodule Ark.OkTest do
     refute ok?({:error, :reason, :a})
     refute ok?({:error, :reason, :a, :b})
   end
+
+  defmodule SampleError do
+    defexception [:message]
+  end
+
+  test "exception unwrapping macro" do
+    number = fn -> {:ok, 1} end
+    isok = fn -> :ok end
+    throws = fn -> {:error, %SampleError{message: "failure"}} end
+    reason = fn -> {:error, :something_happened} end
+
+    assert 1 = xok!(number.())
+    assert :ok = xok!(isok.())
+
+    assert_raise SampleError, fn ->
+      xok!(throws.())
+    end
+
+    assert_raise Ark.Ok.UnwrapError, fn ->
+      xok!(reason.())
+    end
+  end
 end

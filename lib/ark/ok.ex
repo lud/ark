@@ -1,6 +1,10 @@
 defmodule Ark.Ok do
   defmodule UnwrapError do
-    defexception [:message]
+    defexception [:value]
+
+    def message(%{value: value}) do
+      "Could not unwrap value: #{inspect(value)}"
+    end
   end
 
   @doc false
@@ -72,7 +76,27 @@ defmodule Ark.Ok do
     do: val
 
   def uok!(other) do
-    raise UnwrapError, message: "Could not unwrap value: #{inspect(other)}"
+    raise UnwrapError, value: other
+  end
+
+  @doc """
+  Unwrapping ok, raising custom exceptions.
+
+  Much like `uok!/1` but if an `:error` 2-tuple contains any exception as the
+  second element, that exception will be raised.
+
+  Other values will lead to a generic `Ark.Ok.UnwrapError` exception to be
+  reaised.
+  """
+  defmacro xok!(value) do
+    quote do
+      case unquote(value) do
+        :ok -> :ok
+        {:ok, value} -> value
+        {:error, %{__exception__: true} = e} -> raise e
+        other -> raise UnwrapError, value: other
+      end
+    end
   end
 
   @doc """

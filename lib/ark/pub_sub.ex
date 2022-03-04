@@ -78,7 +78,7 @@ defmodule Ark.PubSub do
 
     state.topic2subs
     |> Map.get(topic, [])
-    |> Enum.map(fn sub -> send_event(sub, topic, value) end)
+    |> Enum.each(fn sub -> send_event(sub, topic, value) end)
 
     # If the topic is a property, we will store the property key in the state
     state =

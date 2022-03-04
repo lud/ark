@@ -9,7 +9,7 @@ defmodule Ark.MixProject do
   def project do
     [
       app: :ark,
-      version: "0.6.0",
+      version: "0.6.1",
       elixir: "~> 1.9",
       start_permanent: false,
       deps: deps(),
@@ -37,7 +37,8 @@ defmodule Ark.MixProject do
 
   defp deps do
     [
-      {:ex_doc, ">= 0.0.0", only: :dev}
+      {:ex_doc, ">= 0.0.0", only: :dev},
+      {:credo, "~> 1.6", only: [:dev, :test], runtime: false}
     ]
   end
 end

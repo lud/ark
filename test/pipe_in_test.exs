@@ -44,7 +44,5 @@ defmodule Ark.PipeInTest do
     |> Atom.to_string()
     |> String.upcase()
     ~> my_value
-
-    IO.inspect(my_value, label: "my_value")
   end
 end
