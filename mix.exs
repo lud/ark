@@ -13,6 +13,7 @@ defmodule Ark.MixProject do
       elixir: "~> 1.9",
       start_permanent: false,
       deps: deps(),
+      # consolidate_protocols: Mix.env() != :test,
       description: @description,
       package: package(),
       source_url: "https://github.com/lud/ark",
