@@ -54,12 +54,16 @@ defmodule Ark.InterfaceTest do
   end
 
   test "a protocol can be implemented using deriving" do
-    state = Derives.new() |> P.put_val(:k1, 123)
-    assert 123 = P.get_val(state, :k1)
+    assert 123 =
+             Derives.new()
+             |> P.put_val(:k1, 123)
+             |> P.get_val(:k1)
   end
 
   test "a protocol can be implemented using auto_impl" do
-    state = AutoImplements.new() |> P.put_val(:k1, 123)
-    assert 123 = P.get_val(state, :k1)
+    assert 123 =
+             AutoImplements.new()
+             |> P.put_val(:k1, 123)
+             |> P.get_val(:k1)
   end
 end

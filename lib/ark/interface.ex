@@ -8,7 +8,8 @@ defmodule Ark.Interface do
         &(is_tuple(&1) and tuple_size(&1) == 3 and :def == elem(&1, 0))
       )
 
-    any_defs =
+    # Generate implementation of the protocol that will throw
+    defs_for_any_itself =
       Enum.map(defs, fn {:def, _meta, [{function, _meta2, args}]} ->
         args = Enum.map(args, fn _ -> {:_, [], nil} end)
 
@@ -20,39 +21,26 @@ defmodule Ark.Interface do
       end)
 
     [
+      # Define the protocol
       quote location: :keep do
         defprotocol unquote(proto) do
           unquote(block)
         end
       end,
+
+      # Define the implemementation for Any, containing the deriving macro
       quote location: :keep do
-        errmsg = "#{inspect(unquote(proto))} must be derived"
-
         defimpl unquote(proto), for: Any do
-          defs = unquote(Macro.escape(defs))
-
-          defmacro __deriving__(module, struct, _options) do
+          defmacro __deriving__(_module, _struct, _options) do
             proto = unquote(proto)
-            defs = unquote(Macro.escape(defs))
 
-            quote location: :keep,
-                  bind_quoted: [
-                    proto: proto,
-                    defs: Macro.escape(defs),
-                    impl_mod: struct.__struct__,
-                    module: module
-                  ] do
-              defimpl proto do
-                Enum.each(defs, fn {:def, meta, [{function, meta2, args}]} ->
-                  def unquote(function)(unquote_splicing(args)) do
-                    unquote(impl_mod).unquote(function)(unquote_splicing(args))
-                  end
-                end)
-              end
+            quote do
+              require Ark.Interface
+              Ark.Interface.auto_impl(unquote(proto))
             end
           end
 
-          unquote(any_defs)
+          unquote(defs_for_any_itself)
         end
       end
     ]
