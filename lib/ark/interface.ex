@@ -42,7 +42,7 @@ defmodule Ark.Interface do
                     impl_mod: struct.__struct__,
                     module: module
                   ] do
-              defimpl proto, for: module do
+              defimpl proto do
                 Enum.each(defs, fn {:def, meta, [{function, meta2, args}]} ->
                   def unquote(function)(unquote_splicing(args)) do
                     unquote(impl_mod).unquote(function)(unquote_splicing(args))
@@ -56,5 +56,27 @@ defmodule Ark.Interface do
         end
       end
     ]
+  end
+
+  defmacro auto_impl(proto) do
+    module = __CALLER__.module
+
+    quote location: :keep,
+          bind_quoted: [
+            proto: proto,
+            module: module
+          ] do
+      defs = proto.__protocol__(:functions)
+
+      defimpl proto do
+        Enum.each(defs, fn {function, arity} when arity > 0 ->
+          args = Enum.map(1..arity//1, fn i -> Macro.var(:"arg_#{i}", :auto_defimpl) end)
+
+          def unquote(function)(unquote_splicing(args)) do
+            unquote(module).unquote(function)(unquote_splicing(args))
+          end
+        end)
+      end
+    end
   end
 end
