@@ -117,4 +117,32 @@ defmodule Ark.Ok do
 
   def ok?(_),
     do: false
+
+  @doc """
+  Mapping while ok.  Takes an enumerable and applies the given callback to all
+  values of the enumerable as long as the callback returns `{:ok,
+  mapped_value}`.
+
+  Stops when the callback returns `{:error, term}` and returns that tuple.
+
+  Returns `{:error, {:bad_return, returned_value}}` if the callback does not return a result
+  tuple.
+
+  Returns `{:ok, mapped_values}` or `{:error, term}`
+  """
+  @spec map_ok(Enumerable.t(), (term -> {:ok, term} | {:error, term})) ::
+          {:ok, list} | {:error, term}
+  def map_ok(enum, f) when is_function(f, 1) do
+    Enum.reduce_while(enum, [], fn item, acc ->
+      case f.(item) do
+        {:ok, result} -> {:cont, [result | acc]}
+        {:error, _} = err -> {:halt, err}
+        other -> {:halt, {:error, {:bad_return, other}}}
+      end
+    end)
+    |> case do
+      {:error, _} = err -> err
+      acc -> {:ok, :lists.reverse(acc)}
+    end
+  end
 end

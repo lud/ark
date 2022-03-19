@@ -1,5 +1,6 @@
 defmodule Ark.OkTest do
   use ExUnit.Case, async: true
+  doctest Ark.Ok
   import Ark.Ok
 
   test "wrapping ok" do
@@ -62,5 +63,22 @@ defmodule Ark.OkTest do
     assert_raise Ark.Ok.UnwrapError, fn ->
       xok!(reason.())
     end
+  end
+
+  test "mapping while ok" do
+    under_10 = fn
+      v when v < 10 -> {:ok, v * v}
+      _ -> {:error, :too_high}
+    end
+
+    assert {:ok, [1, 4, 9, 16]} == map_ok(1..4, under_10)
+    assert {:error, :too_high} == map_ok(1..10, under_10)
+
+    no_tuple = fn
+      v when v < 10 -> {:ok, v * v}
+      v -> v
+    end
+
+    assert {:error, {:bad_return, 10}} == map_ok(1..10, no_tuple)
   end
 end
