@@ -1,6 +1,5 @@
 defmodule Ark.OkTest do
   use ExUnit.Case, async: true
-  doctest Ark.Ok
   import Ark.Ok
 
   test "wrapping ok" do
@@ -79,6 +78,6 @@ defmodule Ark.OkTest do
       v -> v
     end
 
-    assert {:error, {:bad_return, 10}} == map_ok(1..10, no_tuple)
+    assert {:error, {:bad_return, {no_tuple, [10]}, 10}} == map_ok(1..10, no_tuple)
   end
 end

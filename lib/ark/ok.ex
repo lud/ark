@@ -125,8 +125,8 @@ defmodule Ark.Ok do
 
   Stops when the callback returns `{:error, term}` and returns that tuple.
 
-  Returns `{:error, {:bad_return, returned_value}}` if the callback does not return a result
-  tuple.
+  Returns `{:error, {:bad_return, {callback, [item]}, returned_value}}` if the
+  callback does not return a result tuple.
 
   Returns `{:ok, mapped_values}` or `{:error, term}`
   """
@@ -137,7 +137,7 @@ defmodule Ark.Ok do
       case f.(item) do
         {:ok, result} -> {:cont, [result | acc]}
         {:error, _} = err -> {:halt, err}
-        other -> {:halt, {:error, {:bad_return, other}}}
+        other -> {:halt, {:error, {:bad_return, {f, [item]}, other}}}
       end
     end)
     |> case do
