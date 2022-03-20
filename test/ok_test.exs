@@ -80,4 +80,22 @@ defmodule Ark.OkTest do
 
     assert {:error, {:bad_return, {no_tuple, [10]}, 10}} == map_ok(1..10, no_tuple)
   end
+
+  test "reducing while ok" do
+    # in this test we take some keys from a source map and move them to a target
+    # map
+    source = %{a: 1, b: 2, c: 2}
+    target = %{}
+
+    mover = fn key, {source, target} ->
+      case Map.pop(source, key, :__not_found) do
+        {:__not_found, _} -> {:error, {:not_found, key}}
+        {value, source} -> {:ok, {source, Map.put(target, key, value)}}
+      end
+    end
+
+    assert {:ok, {%{c: 2}, %{a: 1, b: 2}}} == reduce_ok([:a, :b], {source, target}, mover)
+
+    assert {:error, {:not_found, :z}} == reduce_ok([:a, :b, :z], {source, target}, mover)
+  end
 end

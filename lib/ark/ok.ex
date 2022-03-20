@@ -145,4 +145,31 @@ defmodule Ark.Ok do
       acc -> {:ok, :lists.reverse(acc)}
     end
   end
+
+  @doc """
+  Reducing while ok. Takes an enumerable, an initial value for the accumulator
+  and a reducer function. Calls the reducer for each value in the enumerable as
+  long as the reducer returns `{:ok, new_acc}`.
+
+  Stops when the reducer returns `{:error, term}` and returns that tuple.
+
+  Returns `{:error, {:bad_return, {reducer, [item, acc]}, returned_value}}` if
+  the reducer does not return a result tuple.
+  """
+  @spec reduce_ok(Enumerable.t(), term, (term, term -> {:ok, term} | {:error, term})) ::
+          {:ok, term}
+          | {:error, term}
+  def reduce_ok(enum, initial, f) when is_function(f, 2) do
+    Enum.reduce_while(enum, initial, fn item, acc ->
+      case f.(item, acc) do
+        {:ok, new_acc} -> {:cont, new_acc}
+        {:error, _} = err -> {:halt, err}
+        other -> {:halt, {:error, {:bad_return, {f, [item, acc]}, other}}}
+      end
+    end)
+    |> case do
+      {:error, _} = err -> err
+      acc -> {:ok, acc}
+    end
+  end
 end
