@@ -95,9 +95,6 @@ defmodule Ark.DripNext do
       max_drips = Keyword.fetch!(opts, :max_drips)
       range_ms = Keyword.fetch!(opts, :range_ms)
 
-      # for each time window we send ourselves a reset
-      :timer.send_interval(range_ms, :reset, max_drips)
-
       state = %S{
         max_drips: max_drips,
         range_ms: range_ms,
@@ -143,12 +140,8 @@ defmodule Ark.DripNext do
 
   @impl GenServer
   def handle_info(:timeout, %S{} = state) do
-    # when starting a new window we will use the previous "next_reset" as "now".
-    # This will compensate for messaging and calculations (queuing, timeouts) by
-    # using slightly lesser wide windows.
-    %S{range_ms: range_ms, next_reset: next_reset} = state
-    now = next_reset
-    next_reset = now + range_ms
+    %S{range_ms: range_ms} = state
+    next_reset = now_ms() + range_ms
     state = %S{state | used: 0, next_reset: next_reset}
     state = run_queue(state)
     {:noreply, state, next_timeout(state)}
