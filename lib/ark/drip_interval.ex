@@ -1,4 +1,4 @@
-defmodule Ark.DripNext do
+defmodule Ark.DripInterval do
   use GenServer
   alias :queue, as: Q
 
@@ -81,10 +81,7 @@ defmodule Ark.DripNext do
       # timestamp at which the next windows will start
       :next_reset,
       # a queue to buffer demands when there is no available drip
-      :clients,
-      # a timestamp to remove from timed logs to get log time relative to the
-      # init() call
-      :debug_offset
+      :clients
     ]
     defstruct @enforce_keys
   end
@@ -100,8 +97,7 @@ defmodule Ark.DripNext do
         range_ms: range_ms,
         used: 0,
         next_reset: now_ms() + range_ms,
-        clients: Q.new(),
-        debug_offset: now_ms() + range_ms
+        clients: Q.new()
       }
 
       {:ok, state, range_ms}
@@ -141,6 +137,18 @@ defmodule Ark.DripNext do
   @impl GenServer
   def handle_info(:timeout, %S{} = state) do
     %S{range_ms: range_ms} = state
+    # What happends when the drip is used very slowly
+    #
+    # As long as the usage is not max, requests are served immediately and no
+    # timeout is set (:infinity). That means that the :next_reset value stays in
+    # the past. It can stay in the past for a long time.  At some point, a
+    # request comes, reaches the max threshold and is put into the queue.  From
+    # there, the timeout will be calculated from :next_reset which is still far
+    # in the past, so the timeout will be zero.  Then a :timeout info will be
+    # immediately dispatched to this function clause, and a new time window will
+    # start, starting from now_ms(), and the request will be immediately served.
+    #
+    # So there is no lag behind.
     next_reset = now_ms() + range_ms
     state = %S{state | used: 0, next_reset: next_reset}
     state = run_queue(state)
@@ -186,5 +194,10 @@ defmodule Ark.DripNext do
     :erlang.system_time(:millisecond)
   end
 
-  defp next_timeout(%{next_reset: next}), do: max(0, next - now_ms())
+  defp next_timeout(%{clients: clients, next_reset: next}) do
+    case Q.is_empty(clients) do
+      true -> :infinity
+      false -> max(0, next - now_ms())
+    end
+  end
 end
