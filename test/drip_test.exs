@@ -1,6 +1,6 @@
-defmodule Ark.DripIntervalTest do
+defmodule Ark.DripTest do
   use ExUnit.Case, async: false
-  alias Ark.DripInterval, as: Drip
+  alias Ark.Drip
 
   defmodule H do
     def task(drip, id) do
@@ -124,7 +124,7 @@ defmodule Ark.DripIntervalTest do
 
   test "Drip under supervision" do
     children = [
-      {Ark.DripInterval, spec: {10, 1100}}
+      {Ark.Drip, spec: {10, 1100}}
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html

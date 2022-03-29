@@ -1,12 +1,12 @@
-defmodule Ark.DripInterval do
+defmodule Ark.Drip do
   use GenServer
   alias :queue, as: Q
 
   @doc false
   def __ark__(:doc) do
     """
-    This module implements a `GenServer` and allows to throttle calls
-    to a common resource.
+    This module allows to throttle calls to a common resource with a simple
+    broker process.
     """
   end
 
