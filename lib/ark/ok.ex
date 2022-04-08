@@ -10,7 +10,7 @@ defmodule Ark.Ok do
   @doc false
   def __ark__(:doc) do
     """
-    This module provides function to work with ok/error tuples.
+    This module provides base functions to work with ok/error tuples.
     """
   end
 
