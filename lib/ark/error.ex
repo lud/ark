@@ -61,6 +61,9 @@ defmodule Ark.Error do
       nil
   end
 
+  def to_iodata({%{__exception__: true} = e, stack}) when is_list(stack),
+    do: Exception.format_banner(:error, e, stack)
+
   def to_iodata(%{__exception__: true} = e),
     do: Exception.message(e)
 
