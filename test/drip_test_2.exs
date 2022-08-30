@@ -3,9 +3,6 @@ defmodule Ark.DripTest2 do
   alias Ark.Drip
 
   defp test_bucket(max_drips, range_ms, start_time) do
-    max_drips = 3
-    range_ms = 1000
-
     assert {:ok, bucket} =
              Drip.new_bucket(
                max_drips: max_drips,
@@ -42,15 +39,15 @@ defmodule Ark.DripTest2 do
 
     # now that all drips have been consumed, further calls are rejected
 
-    assert :error == Drip.drop(b, 0)
+    assert {:reject, b} = Drip.drop(b, 0)
 
     # we are moving time to slot two. calls should still be rejected
 
-    assert :error == Drip.drop(b, 400)
+    assert {:reject, b} = Drip.drop(b, 400)
 
     # same with slot three
 
-    assert :error == Drip.drop(b, 999)
+    assert {:reject, b} = Drip.drop(b, 999)
 
     # now our bucket should be full and we can drop anew
 
@@ -73,13 +70,13 @@ defmodule Ark.DripTest2 do
     # since we consumed 3 on the third third of the time period, we should only
     # be able to consume in the third third of the second period
 
-    assert :error == Drip.drop(b, 1000 + 000)
-    assert :error == Drip.drop(b, 1000 + 100)
-    assert :error == Drip.drop(b, 1000 + 200)
-    assert :error == Drip.drop(b, 1000 + 300)
-    assert :error == Drip.drop(b, 1000 + 400)
-    assert :error == Drip.drop(b, 1000 + 500)
-    assert :error == Drip.drop(b, 1000 + 600)
+    assert {:reject, b} = Drip.drop(b, 1000 + 000)
+    assert {:reject, b} = Drip.drop(b, 1000 + 100)
+    assert {:reject, b} = Drip.drop(b, 1000 + 200)
+    assert {:reject, b} = Drip.drop(b, 1000 + 300)
+    assert {:reject, b} = Drip.drop(b, 1000 + 400)
+    assert {:reject, b} = Drip.drop(b, 1000 + 500)
+    assert {:reject, b} = Drip.drop(b, 1000 + 600)
 
     # and we can consume them all
 
@@ -99,13 +96,13 @@ defmodule Ark.DripTest2 do
 
     # we cannot consume more in the 2/3 or in 3/3
 
-    assert :error == Drip.drop(b, 400)
-    assert :error == Drip.drop(b, 999)
+    assert {:reject, b} = Drip.drop(b, 400)
+    assert {:reject, b} = Drip.drop(b, 999)
 
     # in the second period we can consume one from the 1/3 and 2 in the 2/3
 
     assert {:ok, branch1} = Drip.drop(b, 1000 + 0)
-    assert :error == Drip.drop(branch1, 1000 + 0)
+    assert {:reject, branch1} = Drip.drop(branch1, 1000 + 0)
     assert {:ok, branch1} = Drip.drop(b, 1000 + 400)
     assert {:ok, branch1} = Drip.drop(b, 1000 + 400)
 
@@ -113,4 +110,55 @@ defmodule Ark.DripTest2 do
 
     assert {:ok, _} = Drip.drop(b, 1000 + 670)
   end
+
+  test "consume in loop and max time" do
+    # - we will create a bucket that can drop 20 in 100.
+    # - we will drop 3000 drips
+    # - whenever we encounter an :error (rejection), we warp 10ms in the
+    #   future.
+    # - this should take 15 seconds, so 15,000 ms. We will assert that we were
+    #   able to do so in less than 15,000 ms
+
+    # bucket config
+    max_drips = 20
+    range_ms = 100
+    start_time = 0
+
+    # test config
+    iterations = 30000
+    warp_time = 10
+    maximum_expected_time = iterations / max_drips * range_ms
+
+    IO.puts(
+      "maximum_expected_time = (#{iterations} / #{max_drips}) * #{range_ms} = #{round(iterations / max_drips)} * #{range_ms} = #{round(maximum_expected_time)}"
+    )
+
+    bucket = test_bucket(max_drips, range_ms, start_time)
+    accin = {bucket, start_time}
+
+    # a function that will increment time until the drop is accepted, and
+    # returns the new bucket and the new time
+
+    loop = fn f, bucket, now ->
+      case Drip.drop(bucket, now) do
+        {:reject, bucket} ->
+          new_now = now + warp_time
+          f.(f, bucket, new_now)
+
+        {:ok, bucket} ->
+          {bucket, now}
+      end
+    end
+
+    {b, end_time} =
+      Enum.reduce(1..iterations, {bucket, 0}, fn n, {bucket, now} ->
+        {bucket, now} = loop.(loop, bucket, now)
+      end)
+
+    assert end_time < maximum_expected_time
+    end_time |> IO.inspect(label: "end_time")
+    assert iterations == b.count
+  end
+
+  test "large rotate resets"
 end
