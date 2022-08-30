@@ -160,5 +160,26 @@ defmodule Ark.DripTest2 do
     assert iterations == b.count
   end
 
-  test "large rotate resets"
+  test "large gaps in time will simply reset the stage" do
+    b = test_bucket(3, 1000, 0)
+
+    # we can immediately enqueue the full capacity at time zero
+
+    assert {:ok, b} = Drip.drop(b, 997)
+    assert {:ok, b} = Drip.drop(b, 998)
+    assert {:ok, b} = Drip.drop(b, 999)
+
+    assert %{allowance: 0} = b
+
+    # ten seconds after, we should be in slot 3/3 but so much time has passed,
+    # the state will reset
+
+    assert {:ok, b} = Drip.drop(b, 10_000 + 997)
+    assert {:ok, b} = Drip.drop(b, 10_000 + 998)
+    assert {:ok, b} = Drip.drop(b, 10_000 + 999)
+
+    # the count is not reset
+    assert 1 == b.stage
+    assert 6 == b.count
+  end
 end
