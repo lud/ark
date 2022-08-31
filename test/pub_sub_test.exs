@@ -93,7 +93,7 @@ defmodule Ark.PubSubTest do
     refute_receive {PubSub, ^topic, :hi!}
   end
 
-  test "traping exits and linking processes" do
+  test "trapping exits and linking processes" do
     # We will test that when subscribing with the link option, if the PubSub
     # server terminates, a linked process will terminate (at least if it is not)
     # trapping exits. But if the subscriber terminates, the PubSub server will

@@ -241,7 +241,7 @@ defmodule Ark.PubSub.Group do
     end
   end
 
-  defp get_cached_group() do
+  defp get_cached_group do
     with pid when is_pid(pid) <- Process.get(@group_pid),
          true <- Process.alive?(pid) do
       {:ok, pid}
@@ -256,7 +256,7 @@ defmodule Ark.PubSub.Group do
     :ok
   end
 
-  defp get_parent_sup() do
+  defp get_parent_sup do
     case Process.get(:"$ancestors") do
       [sup | _] -> sup
       _ -> raise "Could not find parent supervisor"
