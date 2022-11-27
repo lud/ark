@@ -8,7 +8,7 @@ defmodule Ark.Error do
 
   import Kernel, except: [to_string: 1]
 
-  defmacro reason(tag, data) do
+  defmacro reason(tag, data \\ nil) do
     quote do
       {__MODULE__, unquote(tag), unquote(data)}
     end
@@ -102,7 +102,7 @@ defmodule Ark.Error do
 
       """)
 
-      "#{inspect({tag, data})}"
+      inspect({module, tag, data})
     end
   else
     def format_fallback(module, tag, data) do
