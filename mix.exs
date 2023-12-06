@@ -9,7 +9,7 @@ defmodule Ark.MixProject do
   def project do
     [
       app: :ark,
-      version: "0.8.0",
+      version: "0.9.0",
       elixir: "~> 1.9",
       start_permanent: false,
       deps: deps(),
