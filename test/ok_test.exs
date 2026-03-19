@@ -68,7 +68,9 @@ defmodule Ark.OkTest do
       v -> v
     end
 
-    assert {:error, {:bad_return, {no_tuple, [10]}, 10}} == map_ok(1..10, no_tuple)
+    assert_raise ArgumentError, ~r/unexpected 10, expected a result tuple from/, fn ->
+      map_ok(1..10, no_tuple)
+    end
   end
 
   test "mapping while ok – empty map" do
@@ -91,6 +93,20 @@ defmodule Ark.OkTest do
     assert {:ok, {%{c: 2}, %{a: 1, b: 2}}} == reduce_ok([:a, :b], {source, target}, mover)
 
     assert {:error, {:not_found, :z}} == reduce_ok([:a, :b, :z], {source, target}, mover)
+
+    no_tuple = fn
+      key, {source, target} ->
+        case Map.pop(source, key, :__not_found) do
+          {:__not_found, _} -> :not_found
+          {value, source} -> {:ok, {source, Map.put(target, key, value)}}
+        end
+    end
+
+    assert_raise ArgumentError,
+                 ~r/unexpected :not_found, expected a result tuple from/,
+                 fn ->
+                   reduce_ok([:a, :z], {source, target}, no_tuple)
+                 end
   end
 
   test "reducint while ok – empty map" do
