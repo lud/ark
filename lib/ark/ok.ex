@@ -86,16 +86,14 @@ defmodule Ark.Ok do
   second element, that exception will be raised.
 
   Other values will lead to a generic `Ark.Ok.UnwrapError` exception to be
-  reaised.
+  raised.
   """
-  defmacro xok!(value) do
-    quote do
-      case unquote(value) do
-        :ok -> :ok
-        {:ok, value} -> value
-        {:error, %{__exception__: true} = e} -> raise e
-        other -> raise UnwrapError, value: other
-      end
+  def xok!(value) do
+    case value do
+      :ok -> :ok
+      {:ok, value} -> value
+      {:error, %{__exception__: true} = e} -> raise e
+      other -> raise UnwrapError, value: other |> dbg()
     end
   end
 

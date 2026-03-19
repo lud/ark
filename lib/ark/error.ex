@@ -81,7 +81,7 @@ defmodule Ark.Error do
 
   def to_iodata(other), do: inspect(other)
 
-  def to_string(reason), do: reason |> to_iodata |> :erlang.iolist_to_binary()
+  def to_string(reason), do: reason |> to_iodata() |> :erlang.iolist_to_binary()
 
   if Mix.env() != :prod do
     def format_fallback(module, tag, data) do

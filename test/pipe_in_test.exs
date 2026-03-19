@@ -44,5 +44,7 @@ defmodule Ark.PipeInTest do
     |> Atom.to_string()
     |> String.upcase()
     ~> my_value
+
+    assert "VAL" == my_value
   end
 end

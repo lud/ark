@@ -299,7 +299,7 @@ defmodule Ark.PubSubTest do
     end
 
     def handle_info(msg, test_pid) do
-      Logger.warn("handle_info: #{inspect(msg)}")
+      Logger.warning("handle_info: #{inspect(msg)}")
       {:noreply, test_pid}
     end
   end
