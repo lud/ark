@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.1] - 2026-03-19
+
+### 🚀 Features
+
+- Added Ark.Ok.flat_map_ok/2
+
+### 📚 Documentation
+
+- Added examples for complex 'ok' functions
+
 ## [0.10.0] - 2026-03-19
 
 ### 🚀 Features
