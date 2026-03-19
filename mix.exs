@@ -62,6 +62,7 @@ defmodule Ark.MixProject do
       flags: [:unmatched_returns, :error_handling, :unknown, :extra_return],
       list_unused_filters: true,
       plt_add_deps: :app_tree,
+      plt_add_apps: [:readmix],
       plt_local_path: "_build/plts"
     ]
   end
