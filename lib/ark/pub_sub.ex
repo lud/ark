@@ -211,17 +211,20 @@ defmodule Ark.PubSub.Group do
     sup = get_parent_sup()
     client = self()
 
-    if opts[:async] do
-      spawn_link(fn ->
-        subscribe_from_sup(sup, client, topic, opts, :infinity, fn _ ->
-          send(client, {__MODULE__, topic, :"$subscribed"})
-        end)
-      end)
-
-      :ok
-    else
-      subscribe_from_sup(sup, client, topic, opts, 5000, &put_cached_group/1)
+    case Keyword.pop(opts, :async) do
+      {true, opts} -> :ok = subscribe_to_group_async(sup, client, topic, opts)
+      _ -> subscribe_from_sup(sup, client, topic, opts, 5000, &put_cached_group/1)
     end
+  end
+
+  defp subscribe_to_group_async(sup, client, topic, opts) do
+    spawn_link(fn ->
+      subscribe_from_sup(sup, client, topic, opts, :infinity, fn _ ->
+        send(client, {__MODULE__, topic, :"$subscribed"})
+      end)
+    end)
+
+    :ok
   end
 
   defp subscribe_from_sup(sup, client, topic, opts, timeout, fun) do

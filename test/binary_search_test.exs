@@ -17,11 +17,11 @@ defmodule Ark.BinarySearchTest do
     assert 10 = BinarySearch.search(answer(10))
     assert -10 = BinarySearch.search(answer(-10))
 
-    Enum.each(1..10000, fn n ->
+    Enum.each(1..10_000, fn n ->
       assert n == BinarySearch.search(answer(n))
     end)
 
-    Enum.each(1..10000, fn _ ->
+    Enum.each(1..10_000, fn _ ->
       n = Enum.random(-999_999_999_999_999_999..+999_999_999_999_999_999)
       assert n == BinarySearch.search(answer(n))
     end)

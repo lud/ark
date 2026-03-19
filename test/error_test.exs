@@ -32,7 +32,7 @@ defmodule Ark.ErrorTest do
     import Ark.Error
 
     def with_data(data), do: reason(:got_data, data)
-    def without_data(), do: reason(:no_data)
+    def without_data, do: reason(:no_data)
 
     @doc false
     @spec format_reason(term, term) :: iodata

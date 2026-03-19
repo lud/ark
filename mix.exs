@@ -18,6 +18,7 @@ defmodule Ark.MixProject do
       description: @description,
       package: package(),
       source_url: "https://github.com/lud/ark",
+      dialyzer: dialyzer(),
       docs: [
         main: "readme",
         extras: ["README.md"]
@@ -27,6 +28,14 @@ defmodule Ark.MixProject do
 
   defp elixirc_paths(:prod), do: ["lib"]
   defp elixirc_paths(_), do: ["lib", "dev"]
+
+  def cli do
+    [
+      preferred_envs: [
+        dialyzer: :test
+      ]
+    ]
+  end
 
   def application do
     case Mix.env() do
@@ -43,12 +52,23 @@ defmodule Ark.MixProject do
     ]
   end
 
+  defp dialyzer do
+    [
+      flags: [:unmatched_returns, :error_handling, :unknown, :extra_return],
+      list_unused_filters: true,
+      plt_add_deps: :app_tree,
+      plt_local_path: "_build/plts"
+    ]
+  end
+
   defp deps do
     [
       {:ex_doc, ">= 0.0.0", only: :dev},
       {:readmix, "~> 0.7", only: [:dev, :test]},
       {:credo, "~> 1.6", only: [:dev, :test], runtime: false},
-      {:dialyxir, "~> 1.0", only: [:dev, :test], runtime: false}
+      {:dialyxir, "~> 1.0", only: [:dev, :test], runtime: false},
+      {:ex_check, ">= 0.0.0", only: [:dev, :test], runtime: false},
+      {:mix_audit, ">= 0.0.0", only: [:dev, :test], runtime: false}
     ]
   end
 end
