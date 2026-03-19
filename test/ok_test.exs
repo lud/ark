@@ -1,6 +1,7 @@
 defmodule Ark.OkTest do
   use ExUnit.Case, async: true
   import Ark.Ok
+  doctest Ark.Ok, import: true
 
   test "wrapping ok" do
     assert {:ok, 1} = ok(1)

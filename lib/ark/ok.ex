@@ -39,9 +39,7 @@ defmodule Ark.Ok do
     {:ok, val}
   end
 
-  @doc """
-  `wok` is an alias of wrapping function `:ok`.
-  """
+  @doc false
   def wok(value) do
     ok(value)
   end
@@ -116,6 +114,13 @@ defmodule Ark.Ok do
   Raises `ArgumentError` if the callback does not return a result tuple.
 
   Returns `{:ok, mapped_values}` or `{:error, term}`
+
+      iex> map_ok(1..4, fn v -> {:ok, v * v} end)
+      {:ok, [1, 4, 9, 16]}
+
+      iex> map_ok(1..4, fn 3 -> {:error, :three}; v -> {:ok, v * v} end)
+      {:error, :three}
+
   """
   @spec map_ok(Enumerable.t(), (term -> {:ok, term} | {:error, term})) ::
           {:ok, list} | {:error, term}
@@ -147,6 +152,13 @@ defmodule Ark.Ok do
   Stops when the reducer returns `{:error, term}` and returns that tuple.
 
   Raises `ArgumentError` if the reducer does not return a result tuple.
+
+      iex> reduce_ok(1..4, 0, fn v, acc -> {:ok, acc + v} end)
+      {:ok, 10}
+
+      iex> reduce_ok(1..4, 0, fn 3, _acc -> {:error, :three}; v, acc -> {:ok, acc + v} end)
+      {:error, :three}
+
   """
   @spec reduce_ok(Enumerable.t(), term, (term, term -> {:ok, term} | {:error, term})) ::
           {:ok, term}
@@ -182,6 +194,13 @@ defmodule Ark.Ok do
   the ok tuple does not contain a list.
 
   Returns `{:ok, flat_mapped_values}` or `{:error, term}`.
+
+      iex> flat_map_ok(1..3, fn v -> {:ok, [v, v * 10]} end)
+      {:ok, [1, 10, 2, 20, 3, 30]}
+
+      iex> flat_map_ok(1..3, fn 2 -> {:error, :three}; v -> {:ok, [v, v * 10]} end)
+      {:error, :three}
+
   """
   @spec flat_map_ok(Enumerable.t(), (term -> {:ok, list} | {:error, term})) ::
           {:ok, list} | {:error, term}
