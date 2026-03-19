@@ -77,6 +77,55 @@ defmodule Ark.OkTest do
     assert {:ok, []} = map_ok([], fn _ -> raise "not happening" end)
   end
 
+  test "flat mapping while ok" do
+    expand = fn
+      v when v < 5 -> {:ok, [v, v * 10]}
+      _ -> {:error, :too_high}
+    end
+
+    assert {:ok, [1, 10, 2, 20, 3, 30]} == flat_map_ok(1..3, expand)
+    assert {:error, :too_high} == flat_map_ok(1..5, expand)
+  end
+
+  test "flat mapping while ok – empty list" do
+    assert {:ok, []} = flat_map_ok([], fn _ -> raise "not happening" end)
+  end
+
+  test "flat mapping while ok – callback returns empty lists" do
+    assert {:ok, []} = flat_map_ok(1..3, fn _ -> {:ok, []} end)
+  end
+
+  test "flat mapping while ok – single level of flattening" do
+    assert {:ok, [[1, 2], [3, 4], [1, 2], [3, 4]]} =
+             flat_map_ok(1..2, fn _ -> {:ok, [[1, 2], [3, 4]]} end)
+  end
+
+  test "flat mapping while ok – error on first element" do
+    bail = fn
+      1 -> {:error, :foo}
+      2 -> raise "should not be called"
+    end
+
+    assert {:error, :foo} == flat_map_ok([1, 2], bail)
+  end
+
+  test "flat mapping while ok – bad return value" do
+    no_tuple = fn
+      v when v < 3 -> {:ok, [v]}
+      v -> v
+    end
+
+    assert_raise ArgumentError, ~r/unexpected 3, expected {:ok, list}/, fn ->
+      flat_map_ok(1..3, no_tuple)
+    end
+  end
+
+  test "flat mapping while ok – non-list value in ok tuple" do
+    assert_raise ArgumentError, ~r/expected \{:ok, list\}/, fn ->
+      flat_map_ok(1..3, fn v -> {:ok, v} end)
+    end
+  end
+
   test "reducing while ok" do
     # in this test we take some keys from a source map and move them to a target
     # map

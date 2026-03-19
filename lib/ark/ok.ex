@@ -170,4 +170,51 @@ defmodule Ark.Ok do
       acc -> {:ok, acc}
     end
   end
+
+  @doc """
+  Flat mapping while ok. Takes an enumerable and applies the given callback to
+  all values of the enumerable as long as the callback returns `{:ok, list}`.
+  The returned lists are flattened one level into the result.
+
+  Stops when the callback returns `{:error, term}` and returns that tuple.
+
+  Raises `ArgumentError` if the callback does not return a result tuple or if
+  the ok tuple does not contain a list.
+
+  Returns `{:ok, flat_mapped_values}` or `{:error, term}`.
+  """
+  @spec flat_map_ok(Enumerable.t(), (term -> {:ok, list} | {:error, term})) ::
+          {:ok, list} | {:error, term}
+  def flat_map_ok(enum, f) when is_function(f, 1) do
+    Enum.reduce_while(enum, [], fn item, acc ->
+      case f.(item) do
+        {:ok, list} when is_list(list) ->
+          {:cont, [list | acc]}
+
+        {:error, _} = err ->
+          {:halt, err}
+
+        other ->
+          raise ArgumentError,
+                "unexpected #{inspect(other)}, expected {:ok, list} or {:error, _} from #{inspect(f)}"
+      end
+    end)
+    |> case do
+      {:error, _} = err -> err
+      acc -> {:ok, flat_reverse(acc, [])}
+    end
+  end
+
+  # the first clause is an optimization
+  defp flat_reverse([[elem] | t], acc) do
+    flat_reverse(t, [elem | acc])
+  end
+
+  defp flat_reverse([h | t], acc) do
+    flat_reverse(t, h ++ acc)
+  end
+
+  defp flat_reverse([], acc) do
+    acc
+  end
 end
