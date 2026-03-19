@@ -1,18 +1,32 @@
 # Changelog
+
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [0.10.0-rc1] - 2026-03-19
 
-## [Unreleased]
+### 🚀 Features
+
+- [**breaking**] Removed the drip module (extracted as the kota library)
+- [**breaking**] Removed the deprecated Ark.Ok.uok function
+- [**breaking**] Removed the Ark.PipeIn module
+- [**breaking**] Invalid return values in Ark.Ok.map_ok/reduce_ok now raise
+
+### 📚 Documentation
+
+- Build plugin listing in README.md with readmix
+
+### ⚙️ Miscellaneous Tasks
+
+- Introduced credo, dialyzer, etc.
+- Formatter configuration
+- Fix dialyzer configuration
+- Configure versioning for mix version
+
+## [0.9.0] - 2023-12-06
+
+### 🚀 Features
+
+- New BinarySearch feature
 
 ## [0.5.0] - 2020-09-14
 
-### Changed
-
-- BREAKING CHANGE. Removed all import systems, each utility must be imported
-  wiaht an `import` statement.
-
-### Added
-
-- Added a first prototype for `Ark.PubSub`, a mico pub-sub system.

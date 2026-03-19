@@ -4,6 +4,7 @@ defmodule ArkReadme do
   action(:plugins, params: [])
 
   def plugins(_, _) do
+    :ok = Application.ensure_loaded(:ark)
     {:ok, mods} = :application.get_key(:ark, :modules)
 
     plugin_mods =
