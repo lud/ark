@@ -12,16 +12,6 @@ defmodule Ark.OkTest do
     assert {:error, :reason, :a, :b} = ok({:error, :reason, :a, :b})
   end
 
-  test "unwrapping ok" do
-    assert 1 = uok({:ok, 1})
-    assert 1 = uok(1)
-    assert :ok = uok(:ok)
-    assert :error = uok(:error)
-    assert {:error, :reason} = uok({:error, :reason})
-    assert {:error, :reason, :a} = uok({:error, :reason, :a})
-    assert {:error, :reason, :a, :b} = uok({:error, :reason, :a, :b})
-  end
-
   test "unwrapping raise" do
     assert 1 = uok!({:ok, 1})
     assert :ok = uok!(:ok)

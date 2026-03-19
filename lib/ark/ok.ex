@@ -42,26 +42,6 @@ defmodule Ark.Ok do
     do: ok(value)
 
   @doc """
-  Unwrapping ok.
-
-  Unwraps an `{:ok, val}` tuple, giving only the value, returning anything else
-  as-is. Does not unwrap `{:error, ...}` tuples.
-
-  This function should not be used as it leads to ambiguous code where errors
-  are still wrapped in tuples but values are "naked". A case pattern matching on
-  that type would be very unusual in Elixir/Erlang. Match on the original value
-  or use `uok!/1`.
-  """
-  @deprecated "Match on the values or use the raising version uok!/1"
-  def uok(value)
-
-  def uok({:ok, val}),
-    do: val
-
-  def uok(other),
-    do: other
-
-  @doc """
   Unwrapping ok with raise.
 
   Unwraps an `{:ok, val}` tuple, giving only the value, or returns the single
@@ -93,7 +73,7 @@ defmodule Ark.Ok do
       :ok -> :ok
       {:ok, value} -> value
       {:error, %{__exception__: true} = e} -> raise e
-      other -> raise UnwrapError, value: other |> dbg()
+      other -> raise UnwrapError, value: other
     end
   end
 
