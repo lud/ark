@@ -12,14 +12,21 @@ defmodule Ark.MixProject do
       version: "0.9.0",
       elixir: "~> 1.9",
       start_permanent: false,
+      elixirc_paths: elixirc_paths(Mix.env()),
       deps: deps(),
       # consolidate_protocols: Mix.env() != :test,
       description: @description,
       package: package(),
       source_url: "https://github.com/lud/ark",
-      docs: [main: "Ark"]
+      docs: [
+        main: "readme",
+        extras: ["README.md"]
+      ]
     ]
   end
+
+  defp elixirc_paths(:prod), do: ["lib"]
+  defp elixirc_paths(_), do: ["lib", "dev"]
 
   def application do
     case Mix.env() do
@@ -39,6 +46,7 @@ defmodule Ark.MixProject do
   defp deps do
     [
       {:ex_doc, ">= 0.0.0", only: :dev},
+      {:readmix, "~> 0.7", only: [:dev, :test]},
       {:credo, "~> 1.6", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.0", only: [:dev, :test], runtime: false}
     ]

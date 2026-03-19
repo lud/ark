@@ -1,19 +1,21 @@
 defmodule Ark.StructAccess do
-  @doc false
   def __ark__(:doc) do
     """
-    This module provides a simple way to implement the Access behaviour for any
-    struct.
+    This module provides a simple way to implement the Access behaviour for any struct.
 
-    ### Example
+    #### Example
 
-        iex> defmodule MyStruct do
-        ...>   defstruct k: nil
-        ...>   use Ark.StructAccess
-        ...> end
-        iex> s = %MyStruct{k: 1}
-        iex> put_in(s.k, 2)
-        %MyStruct{k: 2}
+    ```elixir
+    defmodule MyStruct do
+      defstruct [:k]
+      use Ark.StructAccess
+    end
+
+    s = %MyStruct{k: 1}
+    put_in(s.k, 2)
+
+    # => %MyStruct{k: 2}
+    ```
     """
   end
 
