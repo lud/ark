@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.10.0-rc1] - 2026-03-19
+## [0.10.0] - 2026-03-19
 
 ### 🚀 Features
 
@@ -21,6 +21,7 @@ All notable changes to this project will be documented in this file.
 - Formatter configuration
 - Fix dialyzer configuration
 - Configure versioning for mix version
+- Fix readme generator
 
 ## [0.9.0] - 2023-12-06
 
