@@ -26,8 +26,13 @@ defmodule Ark.MixProject do
     ]
   end
 
-  defp elixirc_paths(:prod), do: ["lib"]
-  defp elixirc_paths(_), do: ["lib", "dev"]
+  defp elixirc_paths(:prod) do
+    ["lib"]
+  end
+
+  defp elixirc_paths(_) do
+    ["lib", "dev"]
+  end
 
   def cli do
     [

@@ -30,7 +30,11 @@ defmodule Ark.InterfaceTest do
   defmodule Derives do
     @derive P
     defstruct vars: %{}
-    def new, do: %__MODULE__{}
+
+    def new do
+      %__MODULE__{}
+    end
+
     defdelegate get_val(t, k), to: CommonImpl
     defdelegate put_val(t, k, v), to: CommonImpl
   end
@@ -38,7 +42,11 @@ defmodule Ark.InterfaceTest do
   defmodule AutoImplements do
     Ark.Interface.auto_impl(P)
     defstruct vars: %{}
-    def new, do: %__MODULE__{}
+
+    def new do
+      %__MODULE__{}
+    end
+
     defdelegate get_val(t, k), to: CommonImpl
     defdelegate put_val(t, k, v), to: CommonImpl
   end

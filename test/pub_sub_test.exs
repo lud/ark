@@ -333,7 +333,9 @@ defmodule Ark.PubSubTest do
     assert_check(child_b, {:counter, 4})
   end
 
-  defp assert_check(pid, msg), do: assert_check(pid, msg, 4)
+  defp assert_check(pid, msg) do
+    assert_check(pid, msg, 4)
+  end
 
   defp assert_check(pid, msg, 0) do
     flunk("Child #{inspect(pid)} did not receive #{inspect(msg)} in time")

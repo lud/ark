@@ -16,8 +16,9 @@ defmodule Ark.PubSub do
     """
   end
 
-  def subscribe(ps, topic, opts \\ []),
-    do: subscribe(ps, self(), topic, opts)
+  def subscribe(ps, topic, opts \\ []) do
+    subscribe(ps, self(), topic, opts)
+  end
 
   def subscribe(ps, client, topic, opts) do
     GenServer.call(ps, {:subscribe, client, topic, opts})
@@ -27,8 +28,9 @@ defmodule Ark.PubSub do
     GenServer.call(ps, {:unsubscribe, self(), topic, tag})
   end
 
-  def clear(ps, pid \\ self()),
-    do: GenServer.call(ps, {:clear, pid})
+  def clear(ps, pid \\ self()) do
+    GenServer.call(ps, {:clear, pid})
+  end
 
   def publish(ps, topic, value) do
     GenServer.call(ps, {:publish, topic, value})
@@ -112,8 +114,9 @@ defmodule Ark.PubSub do
     {:noreply, cleanup(state), :infinity}
   end
 
-  defp send_event(rsub(pid: pid, tag: tag), topic, value),
-    do: send(pid, {tag, topic, value})
+  defp send_event(rsub(pid: pid, tag: tag), topic, value) do
+    send(pid, {tag, topic, value})
+  end
 
   defp add_subscription(state, topic, sub) do
     rsub(pid: pid, tag: tag) = sub
@@ -298,15 +301,19 @@ defmodule Ark.PubSub.Group do
     find_pubsub(children)
   end
 
-  defp find_pubsub([{Ark.PubSub, :undefined, _, _} | _]),
-    do: raise("Supervisor's #{@mod} child is not started")
+  defp find_pubsub([{Ark.PubSub, :undefined, _, _} | _]) do
+    raise("Supervisor's #{@mod} child is not started")
+  end
 
-  defp find_pubsub([{Ark.PubSub, pid, _, _} | _]) when is_pid(pid),
-    do: pid
+  defp find_pubsub([{Ark.PubSub, pid, _, _} | _]) when is_pid(pid) do
+    pid
+  end
 
-  defp find_pubsub([_ | children]),
-    do: find_pubsub(children)
+  defp find_pubsub([_ | children]) do
+    find_pubsub(children)
+  end
 
-  defp find_pubsub([]),
-    do: raise("Supervisor has no #{@mod} child")
+  defp find_pubsub([]) do
+    raise("Supervisor has no #{@mod} child")
+  end
 end

@@ -1,5 +1,5 @@
 defmodule Ark.Interface do
-  defmacro definterface(proto, do: block) do
+  defmacro definterface(proto, [{:do, block}]) do
     {:__block__, _, top_level} = block
 
     defs =

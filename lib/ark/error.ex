@@ -17,11 +17,13 @@ defmodule Ark.Error do
   @spec to_iodata(any) :: iodata()
   def to_iodata(reason)
 
-  def to_iodata({:error, e}),
-    do: to_iodata(e)
+  def to_iodata({:error, e}) do
+    to_iodata(e)
+  end
 
-  def to_iodata({:shutdown, e}),
-    do: ["(shutdown) ", to_iodata(e)]
+  def to_iodata({:shutdown, e}) do
+    ["(shutdown) ", to_iodata(e)]
+  end
 
   case Code.ensure_loaded(Ecto.Changeset) do
     {:module, _} ->
@@ -61,27 +63,37 @@ defmodule Ark.Error do
       nil
   end
 
-  def to_iodata({%{__exception__: true} = e, stack}) when is_list(stack),
-    do: Exception.format_banner(:error, e, stack)
-
-  def to_iodata(%{__exception__: true} = e),
-    do: Exception.message(e)
-
-  def to_iodata(%struct{message: message}) when is_binary(message),
-    do: "#{inspect(struct)}: #{message}"
-
-  def to_iodata(message) when is_binary(message),
-    do: message
-
-  def to_iodata({module, tag, data}) when is_atom(module) and is_atom(tag) do
-    if function_exported?(module, :format_reason, 2),
-      do: module.format_reason(tag, data),
-      else: format_fallback(module, tag, data)
+  def to_iodata({%{__exception__: true} = e, stack}) when is_list(stack) do
+    Exception.format_banner(:error, e, stack)
   end
 
-  def to_iodata(other), do: inspect(other)
+  def to_iodata(%{__exception__: true} = e) do
+    Exception.message(e)
+  end
 
-  def to_string(reason), do: reason |> to_iodata() |> :erlang.iolist_to_binary()
+  def to_iodata(%struct{message: message}) when is_binary(message) do
+    "#{inspect(struct)}: #{message}"
+  end
+
+  def to_iodata(message) when is_binary(message) do
+    message
+  end
+
+  def to_iodata({module, tag, data}) when is_atom(module) and is_atom(tag) do
+    if function_exported?(module, :format_reason, 2) do
+      module.format_reason(tag, data)
+    else
+      format_fallback(module, tag, data)
+    end
+  end
+
+  def to_iodata(other) do
+    inspect(other)
+  end
+
+  def to_string(reason) do
+    reason |> to_iodata() |> :erlang.iolist_to_binary()
+  end
 
   if Mix.env() != :prod do
     def format_fallback(module, tag, data) do

@@ -23,23 +23,28 @@ defmodule Ark.Ok do
   """
   def ok(value)
 
-  def ok(:ok),
-    do: :ok
+  def ok(:ok) do
+    :ok
+  end
 
-  def ok(tuple) when elem(tuple, 0) in [:ok, :error],
-    do: tuple
+  def ok(tuple) when elem(tuple, 0) in [:ok, :error] do
+    tuple
+  end
 
-  def ok(:error),
-    do: :error
+  def ok(:error) do
+    :error
+  end
 
-  def ok(val),
-    do: {:ok, val}
+  def ok(val) do
+    {:ok, val}
+  end
 
   @doc """
   `wok` is an alias of wrapping function `:ok`.
   """
-  def wok(value),
-    do: ok(value)
+  def wok(value) do
+    ok(value)
+  end
 
   @doc """
   Unwrapping ok with raise.
@@ -49,11 +54,13 @@ defmodule Ark.Ok do
   """
   def uok!(value)
 
-  def uok!(:ok),
-    do: :ok
+  def uok!(:ok) do
+    :ok
+  end
 
-  def uok!({:ok, val}),
-    do: val
+  def uok!({:ok, val}) do
+    val
+  end
 
   def uok!(other) do
     raise UnwrapError, value: other
@@ -87,14 +94,17 @@ defmodule Ark.Ok do
   """
   def ok?(value)
 
-  def ok?(:ok),
-    do: true
+  def ok?(:ok) do
+    true
+  end
 
-  def ok?({:ok, _}),
-    do: true
+  def ok?({:ok, _}) do
+    true
+  end
 
-  def ok?(_),
-    do: false
+  def ok?(_) do
+    false
+  end
 
   @doc """
   Mapping while ok.  Takes an enumerable and applies the given callback to all
