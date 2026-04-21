@@ -7,21 +7,21 @@ defmodule Ark.PubSubTest do
     {:ok, ps} = PubSub.start_link()
     assert :ok = PubSub.subscribe(ps, :topic_1)
     assert :ok = PubSub.publish(ps, :topic_1, :hello)
-    assert_receive {PubSub, :topic_1, :hello}
+    assert_receive {PubSub, :topic_1, :hello}, 1000
 
     # subscribe with the same options
     :ok = PubSub.subscribe(ps, :topic_1)
     :ok = PubSub.publish(ps, :topic_1, :hello)
     # we will receive the message only once
-    assert_receive {PubSub, :topic_1, :hello}
+    assert_receive {PubSub, :topic_1, :hello}, 1000
     refute_receive {PubSub, :topic_1, :hello}
 
     # subscribe with a different tag
     :ok = PubSub.subscribe(ps, :topic_1, tag: :my_tag)
     :ok = PubSub.publish(ps, :topic_1, :hello)
-    assert_receive {PubSub, :topic_1, :hello}
+    assert_receive {PubSub, :topic_1, :hello}, 1000
     refute_receive {PubSub, :topic_1, :hello}
-    assert_receive {:my_tag, :topic_1, :hello}
+    assert_receive {:my_tag, :topic_1, :hello}, 1000
 
     # clear the subscriptions
     assert :ok = PubSub.clear(ps)
@@ -48,11 +48,11 @@ defmodule Ark.PubSubTest do
     PubSub.publish(ps, topic, :hello)
 
     # Receive tagged with :tag_dup only once
-    assert_receive {:tag_dup, ^topic, :hello}
+    assert_receive {:tag_dup, ^topic, :hello}, 1000
     refute_receive {:tag_dup, ^topic, :hello}
 
     # Still receive tagged with :other tag
-    assert_receive {:other, ^topic, :hello}
+    assert_receive {:other, ^topic, :hello}, 1000
   end
 
   test "unsubscribe" do
@@ -63,21 +63,21 @@ defmodule Ark.PubSubTest do
     assert :ok = PubSub.subscribe(ps, topic)
 
     PubSub.publish(ps, topic, :hello)
-    assert_receive {:tag_1, ^topic, :hello}
-    assert_receive {:tag_2, ^topic, :hello}
-    assert_receive {PubSub, ^topic, :hello}
+    assert_receive {:tag_1, ^topic, :hello}, 1000
+    assert_receive {:tag_2, ^topic, :hello}, 1000
+    assert_receive {PubSub, ^topic, :hello}, 1000
 
     # unsubscribe with tag
     assert :ok = PubSub.unsubscribe(ps, topic, :tag_1)
     PubSub.publish(ps, topic, :hello)
-    assert_receive {:tag_2, ^topic, :hello}
-    assert_receive {PubSub, ^topic, :hello}
+    assert_receive {:tag_2, ^topic, :hello}, 1000
+    assert_receive {PubSub, ^topic, :hello}, 1000
     refute_receive {:tag_1, ^topic, :hello}
 
     # unsubscribe the default tag
     assert :ok = PubSub.unsubscribe(ps, topic)
     assert :ok = PubSub.publish(ps, topic, :hi!)
-    assert_receive {:tag_2, ^topic, _}
+    assert_receive {:tag_2, ^topic, _}, 1000
     refute_receive {_, ^topic, _}
   end
 
@@ -86,7 +86,7 @@ defmodule Ark.PubSubTest do
     {:ok, ps} = PubSub.start_link()
     assert :ok = PubSub.subscribe(ps, topic)
     assert :ok = PubSub.publish(ps, topic, :hello)
-    assert_receive {PubSub, ^topic, :hello}
+    assert_receive {PubSub, ^topic, :hello}, 1000
 
     PubSub.clear(ps)
     assert :ok = PubSub.publish(ps, topic, :hi!)
@@ -124,7 +124,7 @@ defmodule Ark.PubSubTest do
     child1 = start_child.()
     PubSub.publish(ps, topic, :hello)
     send(child1, {:get_last, self()})
-    assert_receive {:last, :hello}
+    assert_receive {:last, :hello}, 1000
     # Kill the child. The PS server must still be alive
     kill_sync(child1)
     refute Process.alive?(child1)
@@ -133,7 +133,7 @@ defmodule Ark.PubSubTest do
     child2 = start_child.()
     PubSub.publish(ps, topic, :hi!)
     send(child2, {:get_last, self()})
-    assert_receive {:last, :hi!}
+    assert_receive {:last, :hi!}, 1000
     # Kill the child. The PS server must still be alive.
     # We will kill it from a spawned process and not the test process which is
     # the ancestor (this is a special case)
@@ -184,26 +184,26 @@ defmodule Ark.PubSubTest do
     child1 = create_child.()
 
     # property is nil, topic is not persisted (refute)
-    assert_receive {^child1, ^prop, nil}
+    assert_receive {^child1, ^prop, nil}, 1000
     refute_receive {^child1, ^topic, _}
 
     # now we publish on the two topics
     PubSub.publish(ps, prop, :propval)
     PubSub.publish(ps, topic, :topicval)
-    assert_receive {^child1, ^prop, :propval}
-    assert_receive {^child1, ^topic, :topicval}
+    assert_receive {^child1, ^prop, :propval}, 1000
+    assert_receive {^child1, ^topic, :topicval}, 1000
 
     # Kill the child and start another one
     kill_sync(child1)
     child2 = create_child.()
     # This time the child should receive the last property value upon
     # subscription, but no message for the normal topic.
-    assert_receive {^child2, ^prop, :propval}
+    assert_receive {^child2, ^prop, :propval}, 1000
     refute_receive {^child2, ^topic, _}
 
     # nil is a valid value. We test the cleanup server-side
     PubSub.publish(ps, prop, nil)
-    assert_receive {^child2, ^prop, nil}
+    assert_receive {^child2, ^prop, nil}, 1000
   end
 
   defp simple_child(init, loop) when is_function(init, 0) and is_function(loop, 2) do

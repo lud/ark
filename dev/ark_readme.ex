@@ -7,20 +7,18 @@ defmodule ArkReadme do
     :ok = Application.ensure_loaded(:ark)
     {:ok, mods} = :application.get_key(:ark, :modules)
 
-    plugin_mods =
-      mods
-      |> Enum.filter(&plugin_module?/1)
-      |> Enum.sort()
+    sorted_mods = Enum.sort(mods)
 
     lines =
-      Enum.flat_map(plugin_mods, fn mod ->
+      Enum.flat_map(sorted_mods, fn mod ->
         Code.ensure_loaded!(mod)
 
-        if function_exported?(mod, :__ark__, 1) do
+        if plugin_module?(mod) do
+          IO.puts("+DOC #{inspect(mod)}")
           doc = mod.__ark__(:doc) |> String.trim()
           ["### `#{inspect(mod)}`\n\n#{doc}\n\n"]
         else
-          IO.warn("#{inspect(mod)} does not export __ark__/1 (unpublished plugin)", [])
+          IO.puts("SKIP #{inspect(mod)}")
           []
         end
       end)
@@ -29,9 +27,7 @@ defmodule ArkReadme do
   end
 
   defp plugin_module?(mod) do
-    case Module.split(mod) do
-      ["Ark", _] -> true
-      _ -> false
-    end
+    Code.ensure_loaded!(mod)
+    function_exported?(mod, :__ark__, 1)
   end
 end

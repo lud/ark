@@ -42,6 +42,10 @@ This module provides base functions to work with ok/error tuples.
 
 This module provides a simple pub-sub mechanism.
 
+### `Ark.Retry`
+
+This module provides base functions to retry operations.
+
 ### `Ark.StructAccess`
 
 This module provides a simple way to implement the Access behaviour for any struct.
