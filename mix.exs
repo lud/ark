@@ -9,7 +9,7 @@ defmodule Ark.MixProject do
   def project do
     [
       app: :ark,
-      version: "0.10.1",
+      version: "0.11.0",
       elixir: "~> 1.9",
       start_permanent: false,
       elixirc_paths: elixirc_paths(Mix.env()),

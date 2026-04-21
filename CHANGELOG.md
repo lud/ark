@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.0] - 2026-04-21
+
+### 🚀 Features
+
+- Added Ark.Retry for macro-free retry utilities
+
 ## [0.10.1] - 2026-03-19
 
 ### 🚀 Features
