@@ -38,6 +38,29 @@ This module provides function to work errors as data.
 
 This module provides base functions to work with ok/error tuples.
 
+### `Ark.Paginator`
+
+This module provides a helper to build streams from paginated sources.
+
+A user-supplied callback is called with an initial state and is expected to
+return the items for the current page along with the next state, until it
+signals that pagination is over.
+
+```elixir
+pages = %{1 => [1, 2, 3], 2 => [4, 5, 6]}
+
+{:ok, stream} =
+  Ark.Paginator.stream(1, fn page ->
+    case Map.get(pages, page, []) do
+      [] -> {:halt, []}
+      items -> {:cont, items, page + 1}
+    end
+  end)
+
+Enum.to_list(stream)
+# => [1, 2, 3, 4, 5, 6]
+```
+
 ### `Ark.PubSub`
 
 This module provides a simple pub-sub mechanism.
