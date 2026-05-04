@@ -20,7 +20,7 @@ testing, and working with Elixir common patterns.
 ```elixir
 def deps do
   [
-    {:ark, "~> 0.11"},
+    {:ark, "~> 0.12"},
   ]
 end
 ```

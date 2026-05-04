@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.0] - 2026-05-04
+
+### 🚀 Features
+
+- Added the Ark.Paginator module
+
 ## [0.11.0] - 2026-04-21
 
 ### 🚀 Features
