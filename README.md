@@ -68,10 +68,6 @@ Enum.to_list(stream)
 # => [1, 2, 3, 4, 5, 6]
 ```
 
-### `Ark.PubSub`
-
-This module provides a simple pub-sub mechanism.
-
 ### `Ark.Retry`
 
 This module provides base functions to retry operations.
