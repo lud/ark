@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.0] - 2026-05-13
+
+### 🚀 Features
+
+- Added Ark.Timeout utility
+- Removed unused PubSub utility
+- Paginator will now raise page errors as dedicated exceptions
+
 ## [0.12.0] - 2026-05-04
 
 ### 🚀 Features
