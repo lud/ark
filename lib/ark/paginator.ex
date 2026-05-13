@@ -1,4 +1,13 @@
 defmodule Ark.Paginator do
+  defmodule CallbackError do
+    defexception [:reason]
+
+    @impl true
+    def message(%{reason: reason}) do
+      "error in paginator callback: #{inspect(reason)}"
+    end
+  end
+
   @doc false
   def __ark__(:doc) do
     """
@@ -34,34 +43,49 @@ defmodule Ark.Paginator do
 
   @doc """
   Accepts an initial state and a pagination callback and immediately calls the
-  callback with the initial state, expecting a result tuple.
+  callback with the initial state.
 
-  If the callback returns `{:cont, items, new_state}`, then this function
-  returns `{:ok, stream}`, otherwise it returns the same `{:error, reason}`
-  tuple as the callback did.
+  The callback receives the current state and must return one of:
 
-  The callback is intended to be a stream generator, so it can return one of the
-  following:
+  - `{:cont, items, new_state}`: Yields items into the stream and continues
+    pagination with `new_state`. Items can be any `Enumerable` (list or stream).
+  - `{:halt, items}`: Yields a final set of items and stops. The callback will
+    not be called again. Useful when the current response already signals it
+    was the last page, so no extra request is needed.
+  - `{:error, reason}`: Stops pagination with an error.
 
-  - `{:cont, items, new_state}`: Returns the items to be part of the stream, and
-    a new state. The items can be a list, or a stream.
-  - `{:halt, items}`: Returns the last items or stream and stops the pagination.
-    The callback will not be called again.
-  - `{:error, reason}`: Returns an error and stops the pagination. The stream
-    will emit an error.
+  ## Return shapes
 
+  - `{:ok, stream}` when the first call returns `{:cont, items, new_state}`.
+    The stream lazily concatenates the items from this and all following pages.
+  - `{:ok, items}` when the first call returns `{:halt, items}`. No stream is
+    built; pagination ends immediately and the items are returned as-is.
+  - `{:error, reason}` when the first call returns `{:error, reason}`. The
+    callback's error tuple is returned unchanged.
 
-  ### Example
+  ## Error handling
+
+  Errors are surfaced differently depending on when they happen:
+
+  - On the **first call**, `{:error, reason}` is returned as a tagged tuple so
+    that initial failures (auth, network, bad config) can be handled without
+    exception machinery.
+  - On **subsequent calls**, the error is raised, since a stream has no way to
+    surface an error tuple to its consumer:
+      - If `reason` is itself an exception struct, it is raised as-is.
+      - Otherwise, a `Ark.Paginator.CallbackError` is raised with `reason` set on the
+        struct.
+
+  ## Example
 
       iex> pages = %{1 => [1, 2, 3], 2 => [98, 99, 100]}
       iex> {:ok, stream} =
-      iex>   Paginator.stream(1, fn
-      iex>     page ->
-      iex>       case Map.get(pages, page, []) do
-      iex>         [] -> {:halt, []}
-      iex>         items -> {:cont, items, page + 1}
-      iex>       end
-      iex>   end)
+      ...>   Ark.Paginator.stream(1, fn page ->
+      ...>     case Map.get(pages, page, []) do
+      ...>       [] -> {:halt, []}
+      ...>       items -> {:cont, items, page + 1}
+      ...>     end
+      ...>   end)
       iex> Enum.to_list(stream)
       [1, 2, 3, 98, 99, 100]
   """
@@ -103,8 +127,11 @@ defmodule Ark.Paginator do
               {:halt, next_items} ->
                 {next_items, :halted}
 
+              {:error, %_{__exception__: true} = exception} ->
+                raise exception
+
               {:error, reason} ->
-                raise "error in paginator callback: #{inspect(reason)}"
+                raise __MODULE__.CallbackError, reason: reason
             end
 
           :halted ->

@@ -3,6 +3,8 @@ defmodule Ark.PaginatorTest do
 
   alias Ark.Paginator
 
+  doctest Ark.Paginator
+
   describe "stream/2 initial result" do
     test "returns {:ok, stream} when first callback returns :cont" do
       assert {:ok, stream} =
@@ -98,16 +100,37 @@ defmodule Ark.PaginatorTest do
       assert Enum.to_list(stream) == [:a]
     end
 
-    test "raises when a subsequent page returns :error" do
+    test "raises Ark.Paginator.Error when a subsequent page returns a non-exception :error" do
       {:ok, stream} =
         Paginator.stream(1, fn
           1 -> {:cont, [:a], 2}
           2 -> {:error, :network_down}
         end)
 
-      assert_raise RuntimeError, ~r/error in paginator callback.*network_down/, fn ->
-        Enum.to_list(stream)
-      end
+      err =
+        assert_raise Paginator.CallbackError, fn ->
+          Enum.to_list(stream)
+        end
+
+      assert err.reason == :network_down
+      assert Exception.message(err) == "error in paginator callback: :network_down"
+    end
+
+    test "re-raises the exception as-is when :error reason is an exception struct" do
+      exception = ArgumentError.exception("bad page")
+
+      {:ok, stream} =
+        Paginator.stream(1, fn
+          1 -> {:cont, [:a], 2}
+          2 -> {:error, exception}
+        end)
+
+      err =
+        assert_raise ArgumentError, fn ->
+          Enum.to_list(stream)
+        end
+
+      assert err == exception
     end
 
     test "is lazy: the callback is not invoked beyond the requested items" do
