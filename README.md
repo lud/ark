@@ -11,8 +11,15 @@
 <!-- rdmx /:badges -->
 
 
-Ark is a collection of small utilities useful for prototyping,
-testing, and working with Elixir common patterns.
+Ark is a collection of small utilities for common Elixir patterns: things you
+find yourself rewriting across projects, too small to warrant a dedicated
+package but absent from the standard library.
+
+The implementations are intentionally simple. They cover the common case well,
+but your project's needs may outgrow them, at which point reaching for a
+dedicated library or a custom solution is the right call.
+
+
 
 ## Installation
 
@@ -86,6 +93,10 @@ put_in(s.k, 2)
 
 # => %MyStruct{k: 2}
 ```
+
+### `Ark.Timeout`
+
+Helpers to work with numerical timeout values
 
 <!-- rdmx /ark:plugins -->
 
