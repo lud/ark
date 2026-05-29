@@ -3,6 +3,10 @@ defmodule Ark.OkTest do
   import Ark.Ok
   doctest Ark.Ok, import: true
 
+  def erase_type(it) do
+    Process.get(make_ref(), it)
+  end
+
   test "wrapping ok" do
     assert {:ok, 1} = ok(1)
     assert :ok = ok(:ok)
@@ -40,18 +44,18 @@ defmodule Ark.OkTest do
   test "exception unwrapping macro" do
     number = fn -> {:ok, 1} end
     isok = fn -> :ok end
-    throws = fn -> {:error, %SampleError{message: "failure"}} end
-    reason = fn -> {:error, :something_happened} end
+    exception_result = fn -> erase_type({:error, %SampleError{message: "failure"}}) end
+    error_result = fn -> erase_type({:error, :something_happened}) end
 
     assert 1 = xok!(number.())
     assert :ok = xok!(isok.())
 
     assert_raise SampleError, fn ->
-      xok!(throws.())
+      xok!(exception_result.())
     end
 
     assert_raise Ark.Ok.UnwrapError, fn ->
-      xok!(reason.())
+      xok!(error_result.())
     end
   end
 
