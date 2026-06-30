@@ -1,5 +1,29 @@
 defmodule Ark.Ok do
+  @moduledoc """
+  Helpers for working with `:ok` and `:error` result tuples.
+
+  Functions in this module wrap plain values into result tuples, unwrap them
+  back, test them, and run enumerations that stop on the first error. They cover
+  the conventions Elixir uses for results: the bare atoms `:ok` and `:error`,
+  and the `{:ok, value}` / `{:error, reason}` tuples.
+
+      iex> ok(42)
+      {:ok, 42}
+      iex> uok!({:ok, 42})
+      42
+
+  The enumeration helpers `map_ok/2`, `reduce_ok/3` and `flat_map_ok/2` thread a
+  result through a collection and halt as soon as a step returns `{:error,
+  reason}`, returning that error.
+  """
+
   defmodule UnwrapError do
+    @moduledoc """
+    Raised by `Ark.Ok.uok!/1` and `Ark.Ok.xok!/1` when a value cannot be
+    unwrapped into an `:ok` result.
+
+    The offending value is kept in the `:value` field.
+    """
     defexception [:value]
 
     def message(%{value: value}) do

@@ -1,6 +1,7 @@
 defmodule Ark.ErrorTest do
   use ExUnit.Case, async: true
   alias Ark.Error
+  doctest Ark.Error
 
   test "errors are unwrapped" do
     assert Error.to_string({:error, "hello"}) == Error.to_string("hello")
@@ -29,14 +30,12 @@ defmodule Ark.ErrorTest do
   end
 
   defmodule MyErrors do
-    import Ark.Error
-
     def with_data(data) do
-      reason(:got_data, data)
+      {__MODULE__, :got_data, data}
     end
 
     def without_data do
-      reason(:no_data)
+      {__MODULE__, :no_data, nil}
     end
 
     @doc false

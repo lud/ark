@@ -80,6 +80,17 @@ defmodule Ark.Retry do
     end
   end
 
+  @doc """
+  Returns an infinite stream of the delays `retry/2` waits between attempts.
+
+  Takes the same options as `retry/2` and applies the `:delay`, `:add`, `:exp`
+  and `:cap` modifiers, ignoring `:max_attempts`. The first element is the
+  initial `:delay`, and each following element applies the modifiers to the
+  previous one. Useful to inspect or test a backoff schedule on its own.
+
+      iex> Ark.Retry.delay_stream(delay: 1000, add: 5, exp: 2) |> Enum.take(4)
+      [1000, 2010, 4030, 8070]
+  """
   def delay_stream(opts) when is_list(opts) do
     delay = Keyword.get(opts, :delay, 0)
 

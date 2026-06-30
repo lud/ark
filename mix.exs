@@ -70,12 +70,8 @@ defmodule Ark.MixProject do
 
   defp deps do
     [
-      {:ex_doc, ">= 0.0.0", only: :dev, runtime: false},
       {:readmix, "~> 0.7", only: [:dev, :test], runtime: false},
-      {:credo, "~> 1.6", only: [:dev, :test], runtime: false},
-      {:dialyxir, "~> 1.0", only: [:dev, :test], runtime: false},
-      {:ex_check, ">= 0.0.0", only: [:dev, :test], runtime: false},
-      {:mix_audit, ">= 0.0.0", only: [:dev, :test], runtime: false}
+      {:libdev, ">= 0.0.0", only: [:dev, :test], runtime: false}
     ]
   end
 

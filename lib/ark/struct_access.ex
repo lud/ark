@@ -1,4 +1,26 @@
 defmodule Ark.StructAccess do
+  @moduledoc """
+  Implements the `Access` behaviour for a struct.
+
+  Structs do not support the `Access` callbacks on their own, so `get_in/2`,
+  `put_in/2` and `update_in/2` cannot reach into them with the bracket and dot
+  syntax. Adding `use Ark.StructAccess` delegates the `Access` callbacks to
+  `Map`, so the struct works with those macros.
+
+      defmodule MyApp.Settings do
+        use Ark.StructAccess
+        defstruct [:theme, :locale]
+      end
+
+      settings = %MyApp.Settings{theme: :light}
+      put_in(settings.theme, :dark)
+      # => %MyApp.Settings{theme: :dark, locale: nil}
+
+  The `pop` callback raises, since removing a key would leave a value that is no
+  longer the struct.
+  """
+
+  @doc false
   def __ark__(:doc) do
     """
     This module provides a simple way to implement the Access behaviour for any struct.

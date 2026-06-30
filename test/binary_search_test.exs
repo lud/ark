@@ -1,6 +1,7 @@
 defmodule Ark.BinarySearchTest do
   alias Ark.BinarySearch
   use ExUnit.Case, async: true
+  doctest Ark.BinarySearch
 
   def answer(x) do
     fn

@@ -37,9 +37,19 @@ end
 ## Plugins
 
 <!-- rdmx ark:plugins -->
+### `Ark.BinarySearch`
+
+This module provides an integer binary search driven by a comparison
+callback.
+
 ### `Ark.Error`
 
 This module provides function to work errors as data.
+
+### `Ark.Interface`
+
+This module provides a way to define protocols that dispatch to functions
+defined on the implementing struct's own module.
 
 ### `Ark.Ok`
 

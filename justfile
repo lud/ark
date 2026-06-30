@@ -4,17 +4,19 @@ deps:
 test:
     mix test
 
-_mix_format:
-    mix format
+format:
+    mix format --migrate
 
-_mix_check:
-    mix check
+readmix:
+    mix rdmx.update README.md
+
+_libdev_check:
+    mix libdev.check
 
 _git_status:
     git status
 
-docs:
-    mix rdmx.update README.md
+docs: readmix
     mix docs --warnings-as-errors
 
-check: deps _mix_format _mix_check docs _git_status
+check: format readmix _libdev_check _git_status

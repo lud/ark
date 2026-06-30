@@ -5,6 +5,8 @@ defmodule Ark.RetryTest do
 
   use ExUnit.Case, async: false
 
+  doctest Ark.Retry
+
   defp mut_val(initial_value) do
     ref = make_ref()
     Process.put(ref, initial_value)

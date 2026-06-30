@@ -1,5 +1,35 @@
 defmodule Ark.Paginator do
+  @moduledoc """
+  Builds a `Stream` from a paginated source.
+
+  Many APIs return results one page at a time, with a token or number pointing
+  to the next page. `Ark.Paginator` turns that pattern into a single lazy
+  stream: you supply a callback that fetches one page and reports how to
+  continue, and the paginator calls it as the stream is consumed.
+
+      iex> pages = %{1 => [1, 2, 3], 2 => [4, 5, 6]}
+      iex> {:ok, stream} =
+      ...>   Ark.Paginator.stream(1, fn page ->
+      ...>     case Map.get(pages, page, []) do
+      ...>       [] -> {:halt, []}
+      ...>       items -> {:cont, items, page + 1}
+      ...>     end
+      ...>   end)
+      iex> Enum.to_list(stream)
+      [1, 2, 3, 4, 5, 6]
+
+  See `stream/2` for the callback contract, the return shapes, and how errors
+  are surfaced.
+  """
+
   defmodule CallbackError do
+    @moduledoc """
+    Raised when a paginator callback returns `{:error, reason}` after the first
+    page, where `reason` is not itself an exception.
+
+    The `reason` is kept in the `:reason` field. See `Ark.Paginator.stream/2`
+    for when this is raised instead of returned.
+    """
     defexception [:reason]
 
     @impl true

@@ -1,6 +1,7 @@
 defmodule Ark.TimeoutTest do
   use ExUnit.Case, async: true
   alias Ark.Timeout
+  doctest Ark.Timeout
 
   defp fmt(ms, format \\ :short) do
     IO.iodata_to_binary(Timeout.format(ms, format))
