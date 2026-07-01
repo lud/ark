@@ -1,4 +1,4 @@
-deps:
+_mix_deps:
     mix deps.get
 
 test:
@@ -19,4 +19,4 @@ _git_status:
 docs: readmix
     mix docs --warnings-as-errors
 
-check: format readmix _libdev_check _git_status
+check: _mix_deps format readmix _libdev_check _git_status
