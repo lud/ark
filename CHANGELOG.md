@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.2] - 2026-09-02
+
+### 🚀 Features
+
+- Support private and public audiences in Ark.Error formatters
+
+### 📚 Documentation
+
+- Added missing docs troughout codebase
+
 ## [0.13.1] - 2026-05-29
 
 ### ⚙️ Miscellaneous Tasks
