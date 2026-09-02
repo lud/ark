@@ -10,7 +10,7 @@ defmodule Ark.Error do
       iex> Ark.Error.to_string({:error, "database is down"})
       "database is down"
 
-  `to_iodata/1` and `to_string/1` accept, among others:
+  `to_iodata/2` and `to_string/2` accept, among others:
 
     * a binary message, returned as-is
     * an exception struct, rendered with `Exception.message/1`
@@ -19,33 +19,61 @@ defmodule Ark.Error do
     * an `Ecto.Changeset` or `Ecto.InvalidChangesetError`, when Ecto is loaded
     * any other term, rendered with `inspect/1`
 
+  ### Audiences
+
+  Both functions take an audience, either `:private` (the default) or
+  `:public`. The private rendering is meant for logs and developers, and falls
+  back to `inspect/1` for any term. The public rendering is meant for messages
+  shown to end users:
+
+    * an `{exception, stacktrace}` pair is rendered with `Exception.message/1`
+      instead of the banner
+    * a `{tag, reason}` tuple with an atom tag is rendered as `"(tag) "`
+      followed by the rendering of `reason`
+    * atoms and numbers are rendered with `inspect/1`
+    * any other term produces `"unknown error"` while the full term is logged
+      at the `:error` level
+
+      iex> Ark.Error.to_string({:error, %{secret: "shh"}}, :private)
+      "%{secret: \"shh\"}"
+
+      iex> Ark.Error.to_string({:error, :timeout}, :public)
+      ":timeout"
+
+      iex> Ark.Error.to_string({:error, %{secret: "shh"}}, :public)
+      "unknown error"
+
+      iex> Ark.Error.to_string({:error, {:enoent, "/etc/hosts"}}, :public)
+      "(enoent) /etc/hosts"
+
   ### Custom error formatting
 
   An error can also be a `{module, tag, data}` triple, which lets a module
-  render its own errors. When `module` exports `format_reason/2`, it is called
-  with `tag` and `data` to produce the message:
+  render its own errors. When `module` exports `format_reason/3`, it is called
+  with `tag`, `data` and the audience to produce the message. A
+  `format_reason/2` callback without the audience is also supported:
 
       defmodule MyApp.Upload do
-        @spec format_reason(term, term) :: iodata
-        def format_reason(:too_large, size) do
+        @spec format_reason(term, term, Ark.Error.audience()) :: iodata
+        def format_reason(:too_large, size, _audience) do
           "file is too large: #{size} bytes"
         end
 
-        def format_reason(other, data) do
-          Ark.Error.format_fallback(__MODULE__, other, data)
+        def format_reason(other, data, audience) do
+          Ark.Error.format_fallback(__MODULE__, other, data, audience)
         end
       end
 
       Ark.Error.to_string({MyApp.Upload, :too_large, 5_000_000})
       # => "file is too large: 5000000 bytes"
 
-  `format_fallback/3` renders any tag the module does not handle, so a single
+  `format_fallback/4` renders any tag the module does not handle, so a single
   catch-all clause covers every remaining case.
 
   ### Logging helpers
 
-  `log_error/2` and `debug_error/2` format a reason and send it to `Logger` at
-  the `:error` and `:debug` levels:
+  `log_error/2` and `debug_error/2` format a reason for the `:private`
+  audience and send it to `Logger` at the `:error` and `:debug` levels:
 
       require Ark.Error
       Ark.Error.log_error({:error, :timeout}, request_id: request_id)
@@ -59,6 +87,9 @@ defmodule Ark.Error do
   end
 
   import Kernel, except: [to_string: 1]
+  require Logger
+
+  @type audience :: :private | :public
 
   @doc """
   Renders an error reason as `t:iodata/0`.
@@ -70,29 +101,32 @@ defmodule Ark.Error do
       iex> IO.iodata_to_binary(Ark.Error.to_iodata({:shutdown, "node left"}))
       "(shutdown) node left"
   """
-  @spec to_iodata(any) :: iodata()
-  def to_iodata(reason)
+  @spec to_iodata(any, audience) :: iodata()
+  def to_iodata(reason, audience \\ :private)
 
-  def to_iodata({:error, e}) do
-    to_iodata(e)
+  def to_iodata({:error, e}, audience) do
+    to_iodata(e, audience)
   end
 
-  def to_iodata({:shutdown, e}) do
-    ["(shutdown) ", to_iodata(e)]
+  def to_iodata({:shutdown, e}, audience) do
+    ["(shutdown) ", to_iodata(e, audience)]
   end
 
   case Code.ensure_loaded(Ecto.Changeset) do
     {:module, _} ->
-      def to_iodata(%Ecto.InvalidChangesetError{changeset: changeset, action: action}) do
+      def to_iodata(
+            %Ecto.InvalidChangesetError{changeset: changeset, action: action},
+            audience
+          ) do
         [
           "could not perform changeset action ",
           inspect(action),
           " ",
-          to_iodata(changeset)
+          to_iodata(changeset, audience)
         ]
       end
 
-      def to_iodata(%Ecto.Changeset{} = changeset) do
+      def to_iodata(%Ecto.Changeset{} = changeset, _audience) do
         details =
           changeset
           |> Ecto.Changeset.traverse_errors(fn {msg, opts} ->
@@ -119,83 +153,89 @@ defmodule Ark.Error do
       nil
   end
 
-  def to_iodata({%{__exception__: true} = e, stack}) when is_list(stack) do
+  def to_iodata({%{__exception__: true} = e, stack}, :private) when is_list(stack) do
     Exception.format_banner(:error, e, stack)
   end
 
-  def to_iodata(%{__exception__: true} = e) do
+  def to_iodata({%{__exception__: true} = e, stack}, :public) when is_list(stack) do
     Exception.message(e)
   end
 
-  def to_iodata(%struct{message: message}) when is_binary(message) do
+  def to_iodata(%{__exception__: true} = e, _audience) do
+    Exception.message(e)
+  end
+
+  def to_iodata(%struct{message: message}, _audience) when is_binary(message) do
     "#{inspect(struct)}: #{message}"
   end
 
-  def to_iodata(message) when is_binary(message) do
+  def to_iodata(message, _audience) when is_binary(message) do
     message
   end
 
-  def to_iodata({module, tag, data}) when is_atom(module) and is_atom(tag) do
-    if function_exported?(module, :format_reason, 2) do
-      module.format_reason(tag, data)
-    else
-      format_fallback(module, tag, data)
+  def to_iodata({module, tag, data} = reason, audience)
+      when is_atom(module) and is_atom(tag) do
+    cond do
+      function_exported?(module, :format_reason, 3) ->
+        module.format_reason(tag, data, audience)
+
+      function_exported?(module, :format_reason, 2) ->
+        module.format_reason(tag, data)
+
+      true ->
+        fallback(reason, audience)
     end
   end
 
-  def to_iodata(other) do
-    inspect(other)
+  def to_iodata({tag, sub_reason}, :public) when is_atom(tag) do
+    ["(", Atom.to_string(tag), ") ", to_iodata(sub_reason, :public)]
+  end
+
+  def to_iodata(other, audience) do
+    fallback(other, audience)
+  end
+
+  defp fallback(reason, :private) do
+    inspect(reason)
+  end
+
+  defp fallback(reason, :public) when is_atom(reason) or is_number(reason) do
+    inspect(reason)
+  end
+
+  defp fallback(reason, :public) do
+    Logger.error(["could not generate a public error message for ", inspect(reason)])
+    "unknown error"
   end
 
   @doc """
   Renders an error reason as a binary.
 
-  Same as `to_iodata/1`, with the result collapsed into a single string.
+  Same as `to_iodata/2`, with the result collapsed into a single string.
 
       iex> Ark.Error.to_string({:error, :enoent})
       ":enoent"
   """
-  def to_string(reason) do
-    reason |> to_iodata() |> :erlang.iolist_to_binary()
+  @spec to_string(any, audience) :: binary
+  def to_string(reason, audience \\ :private) do
+    reason |> to_iodata(audience) |> :erlang.iolist_to_binary()
   end
 
   @doc """
   Renders a `{module, tag, data}` error that the module does not handle itself.
 
-  Use this as the catch-all clause of a module's `format_reason/2`, as shown in
-  `Ark.Error`. It returns `inspect({module, tag, data})`. Outside of `:prod`, it
-  also emits a warning suggesting the `format_reason/2` clause to add, so a
-  missing formatter surfaces during development.
+  Use this as the catch-all clause of a module's `format_reason/3`, as shown in
+  `Ark.Error`. The triple is rendered like any other term for the given
+  audience.
   """
-  if Mix.env() != :prod do
-    def format_fallback(module, tag, data) do
-      IO.warn("""
-      undefined function or function clause error when calling #{inspect(module)}.format_reason/2
-
-      Please provide an implementation to suppress this warning.
-
-        @doc false
-        @spec format_reason(term, term) :: iodata
-        def format_reason(#{inspect(tag)}, #{inspect(data)}) do
-          # ...
-        end
-
-        def format_reason(other, data) do
-          #{inspect(__MODULE__)}.format_fallback(__MODULE__, other, data)
-        end
-
-      """)
-
-      inspect({module, tag, data})
-    end
-  else
-    def format_fallback(module, tag, data) do
-      inspect({module, tag, data})
-    end
+  @spec format_fallback(module, atom, term, audience) :: binary
+  def format_fallback(module, tag, data, audience \\ :private) do
+    fallback({module, tag, data}, audience)
   end
 
   @doc """
-  Formats `error` with `to_string/1` and logs it at the `:error` level.
+  Formats `error` with `to_string/2` for the `:private` audience and logs it at
+  the `:error` level.
 
   `metadata` is passed through to `Logger.error/2`. Require the module first,
   since this is a macro.
@@ -206,19 +246,28 @@ defmodule Ark.Error do
   defmacro log_error(error, metadata \\ []) do
     quote do
       require Logger
-      Logger.error(unquote(__MODULE__).to_string(unquote(error)), unquote(metadata))
+
+      Logger.error(
+        unquote(__MODULE__).to_string(unquote(error), :private),
+        unquote(metadata)
+      )
     end
   end
 
   @doc """
-  Formats `error` with `to_string/1` and logs it at the `:debug` level.
+  Formats `error` with `to_string/2` for the `:private` audience and logs it at
+  the `:debug` level.
 
   Behaves like `log_error/2` but logs through `Logger.debug/2`.
   """
   defmacro debug_error(error, metadata \\ []) do
     quote do
       require Logger
-      Logger.debug(unquote(__MODULE__).to_string(unquote(error)), unquote(metadata))
+
+      Logger.debug(
+        unquote(__MODULE__).to_string(unquote(error), :private),
+        unquote(metadata)
+      )
     end
   end
 end

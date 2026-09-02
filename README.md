@@ -25,7 +25,7 @@ dedicated library or a custom solution is the right call.
 
 <!-- rdmx :app_dep vsn:$app_vsn -->
 ```elixir
-def deps do
+defp deps do
   [
     {:ark, "~> 0.13"},
   ]
