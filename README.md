@@ -27,7 +27,7 @@ dedicated library or a custom solution is the right call.
 ```elixir
 defp deps do
   [
-    {:ark, "~> 0.13"},
+    {:ark, "~> 0.14"},
   ]
 end
 ```
