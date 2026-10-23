@@ -42,6 +42,18 @@ end
 This module provides an integer binary search driven by a comparison
 callback.
 
+### `Ark.EctoCursor`
+
+This module provides keyset pagination for Ecto queries, with cursors that
+can be stored in an embedded schema.
+
+```elixir
+cursor = Ark.EctoCursor.new(order_by: [desc: :inserted_at, asc: :id], page_size: 20)
+
+%Ark.EctoCursor.Page{entries: posts, next_cursor: next} =
+  Ark.EctoCursor.fetch_page(cursor, MyApp.Post, MyApp.Repo)
+```
+
 ### `Ark.Error`
 
 This module provides function to work errors as data.

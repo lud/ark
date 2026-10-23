@@ -1,0 +1,5 @@
+[
+  ci_services: [
+    postgres: []
+  ]
+]

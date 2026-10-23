@@ -31,6 +31,10 @@ defmodule Ark.MixProject do
     ["lib"]
   end
 
+  defp elixirc_paths(:test) do
+    ["lib", "dev", "test/support"]
+  end
+
   defp elixirc_paths(_) do
     ["lib", "dev"]
   end
@@ -63,13 +67,19 @@ defmodule Ark.MixProject do
       flags: [:unmatched_returns, :error_handling, :unknown, :extra_return],
       list_unused_filters: true,
       plt_add_deps: :app_tree,
-      plt_add_apps: [:readmix],
+      plt_add_apps: [:readmix, :ecto, :ex_unit],
       plt_local_path: "_build/plts"
     ]
   end
 
   defp deps do
     [
+      # Lib
+      {:ecto, "~> 3.10", optional: true},
+
+      # Dev & Test
+      {:ecto_sqlite3, "~> 0.26.0", only: :test},
+      {:postgrex, "~> 0.22.4", only: :test},
       {:readmix, "~> 0.7", only: [:dev, :test], runtime: false},
       {:libdev, ">= 0.0.0", only: [:dev, :test], runtime: false}
     ]

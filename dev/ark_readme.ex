@@ -1,5 +1,6 @@
 defmodule ArkReadme do
   @moduledoc false
+
   use Readmix.Generator
 
   action(:plugins, params: [])
