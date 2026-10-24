@@ -1010,9 +1010,11 @@ defmodule Ark.EctoCursorTest do
 
     test "rejects a binding that is not an atom or is a boolean" do
       for invalid <- ["target", true, false, 1] do
-        assert_raise ArgumentError, ~r/expected :binding/, fn ->
-          EctoCursor.new(order_by: :id, binding: invalid)
-        end
+        assert_raise ArgumentError,
+                     ~r/invalid value for option :binding in Ark.EctoCursor.new\/1/,
+                     fn ->
+                       EctoCursor.new(order_by: :id, binding: invalid)
+                     end
       end
     end
 
@@ -1204,13 +1206,19 @@ defmodule Ark.EctoCursorTest do
       cursor = EctoCursor.new(order_by: [:score, :id], page_size: 10)
 
       for invalid <- [1, "true"] do
-        assert_raise ArgumentError, ~r/expected :use_index to be a boolean/, fn ->
-          EctoCursor.query(cursor, TestItem, use_index: invalid)
-        end
+        assert_raise ArgumentError,
+                     ~r/invalid value for option :use_index .*expected a boolean/,
+                     fn ->
+                       EctoCursor.query(cursor, TestItem, use_index: invalid)
+                     end
 
-        assert_raise ArgumentError, ~r/expected :use_index to be a boolean/, fn ->
-          EctoCursor.fetch_page(cursor, TestItem, &never_called/1, use_index: invalid)
-        end
+        assert_raise ArgumentError,
+                     ~r/invalid value for option :use_index .*expected a boolean/,
+                     fn ->
+                       EctoCursor.fetch_page(cursor, TestItem, &never_called/1,
+                         use_index: invalid
+                       )
+                     end
       end
     end
   end

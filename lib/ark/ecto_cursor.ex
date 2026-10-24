@@ -172,14 +172,14 @@ if Code.ensure_loaded?(Ecto.Query) do
             binding: atom | nil
           }
 
-    @new_opts_keys [:order_by, :page_size, :binding]
+    @new_opts_defaults %{page_size: nil, binding: nil}
     @type new_opts :: [
             order_by: atom | [atom | {:asc | :desc, atom}],
             page_size: pos_integer | nil,
             binding: atom | nil
           ]
 
-    @query_opts_keys [:page_size, :use_index]
+    @query_opts_defaults %{page_size: nil, use_index: true}
     @type query_opts :: [page_size: pos_integer, use_index: boolean]
 
     @type executor :: module | (Ecto.Query.t() -> [map])
@@ -209,13 +209,17 @@ if Code.ensure_loaded?(Ecto.Query) do
     """
     @spec new(new_opts) :: t
     def new(opts) do
-      opts = Keyword.validate!(opts, @new_opts_keys)
+      new_cursor!(opts, "Ark.EctoCursor.new/1")
+    end
 
-      %__MODULE__{
-        order_by: order_by_opt!(opts),
-        page_size: page_size_opt!(opts),
-        binding: binding_opt!(opts)
-      }
+    defp new_cursor!(opts, subject) do
+      case Ark.Opts.validate!(opts, @new_opts_defaults, subject, &validate_new_opt/2) do
+        %{order_by: order_by, page_size: page_size, binding: binding} ->
+          %__MODULE__{order_by: order_by, page_size: page_size, binding: binding}
+
+        _ ->
+          raise ArgumentError, "missing required option :order_by in #{subject}"
+      end
     end
 
     @doc """
@@ -235,8 +239,7 @@ if Code.ensure_loaded?(Ecto.Query) do
     @spec resume(t | nil, new_opts) ::
             {:ok, t} | {:error, Ark.EctoCursor.MismatchError.t()}
     def resume(cursor_or_nil, opts) do
-      opts = Keyword.validate!(opts, @new_opts_keys)
-      {:ok, resume!(cursor_or_nil, opts)}
+      {:ok, resume_cursor!(cursor_or_nil, opts, "Ark.EctoCursor.resume/2")}
     rescue
       e in Ark.EctoCursor.MismatchError -> {:error, e}
     end
@@ -248,13 +251,17 @@ if Code.ensure_loaded?(Ecto.Query) do
         cursor = Ark.EctoCursor.resume!(stored_cursor, order_by: :id, page_size: 100)
     """
     @spec resume!(t | nil, new_opts) :: t
-    def resume!(nil, opts) do
-      new(opts)
+    def resume!(cursor_or_nil, opts) do
+      resume_cursor!(cursor_or_nil, opts, "Ark.EctoCursor.resume!/2")
     end
 
-    def resume!(%__MODULE__{} = cursor, opts) do
+    defp resume_cursor!(nil, opts, subject) do
+      new_cursor!(opts, subject)
+    end
+
+    defp resume_cursor!(%__MODULE__{} = cursor, opts, subject) do
       %{order_by: expected_order_by, page_size: new_page_size, binding: new_binding} =
-        new(opts)
+        new_cursor!(opts, subject)
 
       %{order_by: order_by} = cursor
 
@@ -293,9 +300,7 @@ if Code.ensure_loaded?(Ecto.Query) do
     """
     @spec query(t, Ecto.Queryable.t(), query_opts) :: Ecto.Query.t()
     def query(%__MODULE__{} = cursor, q, opts \\ []) do
-      opts = Keyword.validate!(opts, @query_opts_keys)
-      page_size = page_size!(cursor, opts[:page_size])
-      use_index? = use_index_opt!(opts)
+      {page_size, use_index?} = query_opts!(cursor, opts, "Ark.EctoCursor.query/3")
       q = validate_queryable!(q, cursor)
       build_query(cursor, q, page_size, use_index?)
     end
@@ -334,9 +339,7 @@ if Code.ensure_loaded?(Ecto.Query) do
     @spec fetch_page(t, Ecto.Queryable.t(), executor, query_opts) ::
             Ark.EctoCursor.Page.t()
     def fetch_page(%__MODULE__{} = cursor, q, repo, opts \\ []) do
-      opts = Keyword.validate!(opts, @query_opts_keys)
-      page_size = page_size!(cursor, opts[:page_size])
-      use_index? = use_index_opt!(opts)
+      {page_size, use_index?} = query_opts!(cursor, opts, "Ark.EctoCursor.fetch_page/4")
       q = validate_queryable!(q, cursor)
       fetch_valid_page(cursor, q, repo, page_size, use_index?)
     end
@@ -359,9 +362,7 @@ if Code.ensure_loaded?(Ecto.Query) do
     """
     @spec stream(t, Ecto.Queryable.t(), executor, query_opts) :: Enumerable.t(map)
     def stream(%__MODULE__{} = cursor, q, repo, opts \\ []) do
-      opts = Keyword.validate!(opts, @query_opts_keys)
-      page_size = page_size!(cursor, opts[:page_size])
-      use_index? = use_index_opt!(opts)
+      {page_size, use_index?} = query_opts!(cursor, opts, "Ark.EctoCursor.stream/4")
       q = validate_queryable!(q, cursor)
 
       pages =
@@ -420,33 +421,48 @@ if Code.ensure_loaded?(Ecto.Query) do
       |> limit([], ^limit)
     end
 
-    defp order_by_opt!(opts) do
-      case Keyword.fetch(opts, :order_by) do
-        {:ok, v} -> Ark.EctoCursor.OrderBy.cast!(v)
-        :error -> raise ArgumentError, "missing required option :order_by"
-      end
+    defp validate_new_opt(:order_by, value) do
+      {:ok, Ark.EctoCursor.OrderBy.cast!(value)}
     end
 
-    defp page_size_opt!(opts) do
-      case Keyword.fetch(opts, :page_size) do
-        {:ok, nil} -> nil
-        {:ok, v} -> validate_page_size!(v)
-        :error -> nil
-      end
+    defp validate_new_opt(:page_size, value) do
+      Ark.Opts.nullable(value, &Ark.Opts.pos_integer/1)
     end
 
-    defp binding_opt!(opts) do
-      case Keyword.fetch(opts, :binding) do
-        {:ok, v} when not is_atom(v) or is_boolean(v) ->
-          raise ArgumentError,
-                "expected :binding to be an atom (except booleans), got: #{inspect(v)}"
+    defp validate_new_opt(:binding, value)
+         when is_atom(value) and not is_boolean(value) do
+      {:ok, value}
+    end
 
-        {:ok, v} ->
-          v
+    defp validate_new_opt(:binding, _value) do
+      {:error, "an atom other than a boolean"}
+    end
 
-        :error ->
-          nil
-      end
+    defp validate_new_opt(_, _) do
+      :unknown
+    end
+
+    defp query_opts!(cursor, opts, subject) do
+      %{page_size: page_size, use_index: use_index?} =
+        Ark.Opts.validate!(opts, @query_opts_defaults, subject, &validate_query_opt/2)
+
+      {page_size!(cursor, page_size), use_index?}
+    end
+
+    defp validate_query_opt(:page_size, value) do
+      Ark.Opts.nullable(value, &Ark.Opts.pos_integer/1)
+    end
+
+    defp validate_query_opt(:use_index, nil) do
+      {:ok, true}
+    end
+
+    defp validate_query_opt(:use_index, value) do
+      Ark.Opts.boolean(value)
+    end
+
+    defp validate_query_opt(_, _) do
+      :unknown
     end
 
     defp page_size!(%{page_size: nil}, nil) do
@@ -467,29 +483,7 @@ if Code.ensure_loaded?(Ecto.Query) do
     end
 
     defp page_size!(_cursor, n) do
-      validate_page_size!(n)
-    end
-
-    defp use_index_opt!(opts) do
-      case Keyword.get(opts, :use_index) do
-        nil ->
-          true
-
-        v when is_boolean(v) ->
-          v
-
-        v ->
-          raise ArgumentError, "expected :use_index to be a boolean, got: #{inspect(v)}"
-      end
-    end
-
-    defp validate_page_size!(n) when is_integer(n) and n > 0 do
       n
-    end
-
-    defp validate_page_size!(n) do
-      raise ArgumentError,
-            "expected :page_size to be a positive integer, got: #{inspect(n)}"
     end
 
     # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
