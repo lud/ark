@@ -67,6 +67,21 @@ defined on the implementing struct's own module.
 
 This module provides base functions to work with ok/error tuples.
 
+### `Ark.Opts`
+
+This module validates keyword list options with a callback and merges them
+over defaults, with helpers to check the option values.
+
+```elixir
+Ark.Opts.validate!([timeout: 500], %{timeout: 5000, retry: true}, fn
+  :timeout, value -> Ark.Opts.pos_integer(value)
+  :retry, value -> Ark.Opts.boolean(value)
+  _, _ -> :unknown
+end)
+
+# => %{timeout: 500, retry: true}
+```
+
 ### `Ark.Paginator`
 
 This module provides a helper to build streams from paginated sources.
