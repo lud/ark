@@ -20,7 +20,7 @@ defmodule Ark.Workflow do
 
   def new(opts \\ []) do
     opts =
-      Ark.Opts.validate!(opts, %{dump_check: false}, "Ark.Workflow.new/1", fn
+      Ark.Opts.validate!(opts, %{dump_check: false}, [subject: "Ark.Workflow.new/1"], fn
         :dump_check, value -> Ark.Opts.boolean(value)
         _, _ -> :unknown
       end)
@@ -467,7 +467,7 @@ defmodule Ark.Workflow do
       Ark.Opts.validate!(
         opts,
         %{context: %{}, middlewares: []},
-        "Ark.Workflow.run/3",
+        [subject: "Ark.Workflow.run/3"],
         &run_opt/2
       )
 
