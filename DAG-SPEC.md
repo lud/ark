@@ -559,15 +559,33 @@ record: `run` returns a graph error (§5).
 Error storage follows Oban's model (persisted errors are formatted
 strings, since JSON cannot carry arbitrary terms — see Oban issue #562),
 plus a structured `kind` field with a closed vocabulary, so kinds are not
-scraped out of the message.
+scraped out of the message. At runtime, the cleaned error also holds the
+original term, so user code can match on the cause of a failure.
 
 ```
 cleaned_error :: %{
-  at:    DateTime (ISO-8601 in serialized form),
-  kind:  :error | :throw | :exit | :user_term | :bad_return,
-  error: binary   # human-readable formatted message (+ stacktrace for crashes)
+  at:      DateTime (ISO-8601 in serialized form),
+  kind:    :error | :throw | :exit | :user_term | :bad_return,
+  message: binary,      # human-readable formatted message (+ stacktrace for crashes)
+  reason:  term | nil   # the original term, runtime only
 }
 ```
+
+`message` is computed the same way for every kind (normalization,
+below). `reason` is the original term:
+
+| `kind`        | `reason`                                                     |
+|---------------|--------------------------------------------------------------|
+| `:user_term`  | the `reason` of the returned `{:error, reason}`              |
+| `:error`      | the exception struct, normalized with `Exception.normalize/3` as for the message; no stacktrace, the message holds it |
+| `:throw`      | the thrown value                                             |
+| `:exit`       | the exit reason                                              |
+| `:bad_return` | the returned value                                           |
+
+`reason` is **runtime only**: it is held for failures recorded in the
+current workflow value, never encoded, and `nil` after a load. The
+generic encoder (§10) never sees it, so a reason holding pids, functions
+or references does not prevent a dump.
 
 ### Normalization (engine-side, mandatory)
 
@@ -615,7 +633,8 @@ rich failure messages defines domain exceptions (optionally with a
   failed with …; A2 tried → failed with …") — there is no separate
   workflow log; the persisted state carries the (cleaned) errors.
 - Failure records are display data that the engine stores as JSON
-  directly. A rule's `:dump` and `:load` (§10) apply to its values only.
+  directly, without the `reason` of their cleaned errors. A rule's
+  `:dump` and `:load` (§10) apply to its values only.
 
 ### Fast-fail pattern (user-side, free)
 
@@ -661,7 +680,9 @@ names, as strings, which can be JSON object keys:
       "key": {"ns": "Elixir.MyApp", "name": "report",
               "params": {"json": 1, "data": {"account_id": 1}}},
       "result": {"ok": {"json": 1, "data": {"total": 120}}},
-      "attempts": {"primary": {"kind": "computation_error", "...": "..."}}
+      "attempts": {"primary": {"computation_error": {
+        "at": "2026-01-01T00:00:00Z", "kind": "user_term", "message": ":timeout"
+      }}}
     },
     {
       "key": {"ns": "Elixir.MyApp", "name": "account",
@@ -673,7 +694,8 @@ names, as strings, which can be JSON object keys:
 ```
 
 (Field names are illustrative.) `result` is absent for a key with
-attempts but no outcome yet. Failure records reference other keys with
+attempts but no outcome yet. A cleaned error is dumped with its `at`,
+`kind` and `message`, never its `reason` (§7). Failure records reference other keys with
 the same key object. A dump holding two entries for the same key is
 invalid. Load decodes the keys and rebuilds the live maps in one pass.
 
@@ -687,10 +709,11 @@ term equality after decoding.
 ### Runtime-only data
 
 A workflow also carries **runtime-only** data that `dump` drops: the
-rules, the targets of the current run and the demand stack (§2). None is
-needed in the dump for correct continuation: the rules come from code,
-and after a load the stack is rebuilt by demanding the targets again,
-which the recorded facts make cheap.
+rules, the targets of the current run, the demand stack (§2) and the
+`reason` of cleaned errors (§7). None is needed in the dump for correct
+continuation: the rules come from code, after a load the stack is rebuilt
+by demanding the targets again, which the recorded facts make cheap, and
+a reason is never read by the engine.
 
 Invariants:
 
@@ -715,6 +738,7 @@ dump(workflow)                         :: {:ok, data} | {:error, codec_error}
 load(workflow, data)                   :: {:ok, workflow} | {:error, codec_error}
 clear_failure(workflow, key | pred)    :: {:ok, workflow} | {:error, :not_failed | graph_error}
 fetch(workflow, key)                   :: {:ok, value} | {:failed, failure_record} | :error | {:error, graph_error}
+attempts(workflow, key)                :: {:ok, %{alt_name => failure_record}} | {:error, graph_error}
 ```
 
 These are the functions of the `Ark.Workflow` module.
@@ -831,6 +855,17 @@ and `:error` for a key with no result, in progress or never demanded. A
 key with no registered rule returns `{:error, graph_error}`, as for
 `run` targets.
 
+`attempts` reads the attempt records of one key, in the same key forms:
+`{:ok, map}` from alternative name to failure record, empty for a key
+with no attempts, and `{:error, graph_error}` for a key with no
+registered rule.
+
+Together they walk the failure tree (§7) from any failed key: `fetch`
+gives the key's failure, `attempts` its record per alternative, and a
+`{:dep_failed, dep_key}` record names the dependency, in full form, to
+read next, down to the leaf `:computation_error` records and their
+cleaned errors, with their `reason`.
+
 ### Errors
 
 Failures of user code are not errors of the API: they are failure
@@ -848,9 +883,11 @@ structs, so `Exception.message/1` formats them for logs:
     whose alternatives failed on different branches has several causes.
 
   Its message describes the tree from the target down to the causes. The
-  error is derived from the records (§7), so it is the same whether the
-  failures happened in this run or before a dump: causes hold cleaned
-  errors, never the raw terms user code returned or raised.
+  error is derived from the records (§7), so its message, and the `kind`,
+  `at` and `message` of each cause, its keys and its tree, are the same
+  whether the failures happened in this run or before a dump. The
+  `reason` of a cause is the original term for a failure recorded in the
+  current workflow value, and `nil` for a failure loaded from a dump.
 - **Graph error** (`Ark.Workflow.GraphError`): the code is wrong,
   whatever the data. It carries a `kind` (invalid rule, invalid target,
   invalid dependency, shadowing, cycle...) and what is needed to debug
@@ -1347,6 +1384,15 @@ helpers in `test/support` are left to the implementor.
   a cleaned error
 - A user exception's `blame/2` callback enriches its formatted message
 - Every cleaned error carries the time it was recorded
+- The `reason` of a cleaned error is the original term...
+  - ...the `reason` of `{:error, reason}` for kind `:user_term`
+  - ...the returned value for kind `:bad_return`
+  - ...the normalized exception struct for kind `:error`, also for an
+    Erlang error
+  - ...the thrown value for kind `:throw`
+  - ...the exit reason for kind `:exit`
+- A dependency function that raises, throws or exits records the same
+  `reason` as a body would
 
 ### Evaluation order (§2)
 
@@ -1545,14 +1591,20 @@ helpers in `test/support` are left to the implementor.
 - The computation error for a target whose alternatives failed on
   different branches lists every leaf as a cause, in evaluation order
 - The computation error for a target that failed before a dump and a load
-  is the same as the one returned by the run that failed it
+  is the same as the one returned by the run that failed it, apart from
+  the `reason` of its causes, `nil` after the load
 - The computation error is derived from the records: for a target failed
   by a key that failed in an earlier run, its causes are those of that
   earlier run
 - A second `run` of a failed target returns the same computation error
 - The target of a computation error is the first target with no value
 - The causes of a computation error hold the cleaned error of each leaf,
-  with its kind: `:user_term`, `:bad_return`, `:error`, `:throw` or `:exit`
+  with its kind: `:user_term`, `:bad_return`, `:error`, `:throw` or `:exit`,
+  and its `reason`
+- From a failed key, `fetch` and `attempts` walk the `{:dep_failed, key}`
+  records down to the leaf: when `:a` needs `:b`, `:b` needs `:c` and the
+  body of `:c` returns `{:error, %SomeError{}}`, the walk from `:a` finds
+  the struct as the `reason` of the leaf record of `:c`
 - A second `run` on the returned workflow...
   - ...with the same targets calls no user code
   - ...with other targets reuses the recorded values
@@ -1589,7 +1641,10 @@ helpers in `test/support` are left to the implementor.
 - Dumping a loaded state that was not run produces the same data as the
   original dump, including undecodable keys *(fixed dump)*
 - A failure record queried after a round trip equals the one before,
-  including its time and kind
+  including its time, kind and message, apart from the `reason` of its
+  cleaned error, `nil` after the load
+- A cleaned error whose `reason` holds a pid or a function does not make
+  `dump` fail
 - A `{:dep_failed, key}` record pointing to an orphaned key survives a
   load and a dump
 - A `{:dep_failed, key}` record pointing to an undecodable key survives a

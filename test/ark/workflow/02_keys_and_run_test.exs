@@ -448,7 +448,7 @@ defmodule Ark.Workflow.KeysAndRunTest do
 
       assert {:ok,
               %{
-                one: {:computation_error, %{kind: :user_term, error: ":nope"}},
+                one: {:computation_error, %{kind: :user_term, message: ":nope"}},
                 two: {:dep_failed, {:default, :b, %{}}}
               }} = Workflow.attempts(wf, :a)
     end

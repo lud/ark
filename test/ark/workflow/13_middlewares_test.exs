@@ -231,7 +231,7 @@ defmodule Ark.Workflow.MiddlewaresTest do
     wf = Workflow.add_rule(Workflow.new(), :a, const_rule(1))
 
     assert {:error, %ComputationError{}, wf} = Workflow.run(wf, [:a], middlewares: [mw])
-    assert %{kind: :error, error: error} = attempt_error(wf, :a)
+    assert %{kind: :error, message: error} = attempt_error(wf, :a)
     assert error =~ "middleware boom"
 
     deps_mw = fn
@@ -259,7 +259,7 @@ defmodule Ark.Workflow.MiddlewaresTest do
     wf = Workflow.add_rule(Workflow.new(), :a, const_rule(1))
 
     assert {:error, %ComputationError{}, wf} = Workflow.run(wf, [:a], middlewares: [mw])
-    assert %{kind: :bad_return, error: error} = attempt_error(wf, :a)
+    assert %{kind: :bad_return, message: error} = attempt_error(wf, :a)
     assert error =~ ":not_a_result"
   end
 

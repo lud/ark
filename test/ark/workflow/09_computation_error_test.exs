@@ -10,6 +10,24 @@ defmodule Ark.Workflow.ComputationErrorTest do
     {:default, name, params}
   end
 
+  defmodule SomeError do
+    defexception [:code]
+
+    @impl true
+    def message(e) do
+      "some error #{e.code}"
+    end
+  end
+
+  defp walk_to_leaf(wf, key) do
+    assert {:failed, {:all_alternatives_failed, [alt]}} = Workflow.fetch(wf, key)
+
+    case Workflow.attempts(wf, key) do
+      {:ok, %{^alt => {:dep_failed, dep_key}}} -> walk_to_leaf(wf, dep_key)
+      {:ok, %{^alt => {:computation_error, cleaned}}} -> [key, alt, cleaned]
+    end
+  end
+
   defp run_failed(wf, targets) do
     assert {:error, %ComputationError{} = e, wf} = Workflow.run(wf, targets)
     {e, wf}
@@ -45,7 +63,7 @@ defmodule Ark.Workflow.ComputationErrorTest do
                %{
                  key: {:default, :c, %{id: 1}},
                  alternative: :main,
-                 error: %{kind: :user_term, error: ":leaf_reason"}
+                 error: %{kind: :user_term, message: ":leaf_reason"}
                }
              ] =
                e.causes
@@ -83,17 +101,17 @@ defmodule Ark.Workflow.ComputationErrorTest do
              %{
                key: {:default, :b, %{}},
                alternative: :default,
-               error: %{error: ":b_reason"}
+               error: %{message: ":b_reason"}
              },
              %{
                key: {:default, :a, %{}},
                alternative: :second,
-               error: %{error: ":a_reason"}
+               error: %{message: ":a_reason"}
              },
              %{
                key: {:default, :c, %{}},
                alternative: :default,
-               error: %{error: ":c_reason"}
+               error: %{message: ":c_reason"}
              },
              %{key: {:default, :mid, %{}}, alternative: :y, error: %{kind: :error}}
            ] = e.causes
@@ -105,7 +123,7 @@ defmodule Ark.Workflow.ComputationErrorTest do
     end
   end
 
-  test "the causes of a computation error hold the cleaned error of each leaf, with its kind" do
+  test "the causes of a computation error hold the cleaned error of each leaf, with its kind and its reason" do
     wf =
       Workflow.add_rule(Workflow.new(), :a, %{
         alts: [
@@ -123,9 +141,29 @@ defmodule Ark.Workflow.ComputationErrorTest do
              Enum.map(e.causes, & &1.alternative)
 
     for %{alternative: alt, error: error} <- e.causes do
-      assert %{kind: ^alt, error: message, at: %DateTime{}} = error
+      assert %{kind: ^alt, message: message, at: %DateTime{}} = error
       assert is_binary(message)
     end
+
+    assert [:x, :not_ok, %RuntimeError{message: "boom"}, :thrown, :exited] ==
+             Enum.map(e.causes, & &1.error.reason)
+  end
+
+  test "from a failed key, fetch and attempts walk the dep_failed records down to the leaf" do
+    wf =
+      Workflow.new()
+      |> Workflow.add_rule(:a, rule([:b], ok_body(1)))
+      |> Workflow.add_rule(:b, rule([:c], ok_body(1)))
+      |> Workflow.add_rule(:c, rule([], error_body(%SomeError{code: 42})))
+
+    {_, wf} = run_failed(wf, [:a])
+
+    assert [
+             {:default, :c, %{}},
+             :default,
+             %{kind: :user_term, reason: %SomeError{code: 42}}
+           ] =
+             walk_to_leaf(wf, :a)
   end
 
   test "the computation error is derived from the records: a target failed by a key that failed in an earlier run" do
@@ -139,7 +177,7 @@ defmodule Ark.Workflow.ComputationErrorTest do
 
     assert key(:a) == e.target
     assert first.causes == e.causes
-    assert [%{key: {:default, :b, %{}}, error: %{error: ":b_reason"}}] = e.causes
+    assert [%{key: {:default, :b, %{}}, error: %{message: ":b_reason"}}] = e.causes
   end
 
   test "a second run of a failed target returns the same computation error" do

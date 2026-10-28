@@ -327,7 +327,7 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
     end
 
     test "raises fails the alternative with a :computation_error, and the next alternative is entered" do
-      assert %{kind: :error, error: error} =
+      assert %{kind: :error, message: error} =
                failing_deps_attempt(fn _, _, _ -> raise "boom" end)
 
       assert error =~ "boom"
