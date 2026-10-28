@@ -1168,6 +1168,9 @@ helpers in `test/support` are left to the implementor.
   - ...with an alternative without `deps` or without `body` is rejected
   - ...with an unknown key in the rule map or in an alternative map is
     rejected
+  - ...that is not a map is rejected
+  - ...with `alts` that is not a keyword list is rejected
+  - ...with an alternative whose `deps` is not a list is rejected
   - ...registers the alternatives of `alts` in list order
   - ...applies its `dump` and `load` to the values of every alternative
   - ...without `dump` and `load` stores its values as they are
@@ -1182,7 +1185,8 @@ helpers in `test/support` are left to the implementor.
     namespace in the namespace of each identity
 - A static dependency...
   - ...naming a rule that is not registered makes `run` return a graph
-    error before calling any user code
+    error before calling any user code, also when no target demands the
+    rule holding it
   - ...with a string `ns` or `name` is rejected when the rule is registered
   - ...with `nil`, `true` or `false` as `ns` or `name` is rejected when
     the rule is registered
@@ -1193,6 +1197,9 @@ helpers in `test/support` are left to the implementor.
   - ...with params that are not a map (a list, an integer) is rejected as
     invalid params
   - ...naming a rule registered later in the graph is accepted
+  - ...that is neither a key, an alias map nor a dependency function (an
+    integer, a list, a four-element tuple) is rejected when the rule is
+    registered
 - The checks on static dependencies apply to the keys inside a static
   alias map
 - A static alias map whose value is a dependency function is rejected
@@ -1202,7 +1209,8 @@ helpers in `test/support` are left to the implementor.
   another dependency
 - The same static key listed twice in one alternative is accepted and
   demanded once...
-  - ...in two forms (`:a` and `{__MODULE__, :a, %{}}`)
+  - ...in two forms (`:a` and `{__MODULE__, :a, %{}}`, or `:a` and
+    `{:default, :a, %{}}` in `:default`)
   - ...under the same alias in two alias maps
 - Two alternatives of one rule may use the same alias for different keys
 - Two alternatives of one rule may declare different dependency lists
@@ -1243,6 +1251,8 @@ helpers in `test/support` are left to the implementor.
   rejected when the rule is registered...
   - ...as a body or a dependency function (arity 3)
   - ...as `:dump` or `:load` (arity 1)
+- A body given as a tuple that is not `{module, function, list}` is
+  rejected when the rule is registered
 - A remote capture naming a function that does not exist yet is accepted
   when the rule is registered
 - A tuple or a capture naming a function that does not exist fails the
@@ -1267,6 +1277,7 @@ helpers in `test/support` are left to the implementor.
   - ...a target `{:default, name, params}` is the same key
   - ...a target written `name` does not name a rule of another namespace
 - An error message prints keys of `:default` without their namespace
+- An error message prints keys of other namespaces with their namespace
 - `run` returns a graph error, without calling user code...
   - ...for a target with no registered rule
   - ...for a target with a string `ns` or `name`
@@ -1274,6 +1285,8 @@ helpers in `test/support` are left to the implementor.
     function
   - ...for a target with no registered rule even when the loaded state
     holds records for that key
+  - ...for a malformed target: `nil`, `true`, an integer, params that are
+    not a map, `{ns, name}` without params, a four-element tuple
 
 ### Dependency forms and the `deps` map (§4)
 
@@ -1396,7 +1409,7 @@ helpers in `test/support` are left to the implementor.
   - ...as a list are demanded in list order: the first failed key fails
     the alternative, and the keys after it are not demanded
   - ...as an alias map are demanded in ordered-iterator order, with the
-    same short-circuit
+    same short-circuit, also for a map of more than 32 keys
   - ...written `name` or `{name, params}` resolve in the namespace of the
     demanding rule, also when a `{module, function, extra_args}`
     dependency function is defined in another module
@@ -1467,6 +1480,7 @@ helpers in `test/support` are left to the implementor.
 ### Context (§6)
 
 - User code receives the context given to the run, unchanged
+- The context defaults to `%{}` when the run is given none
 - A body and a dependency function receive the same context
 - An alternative receives nothing about why previous alternatives failed
 - Context is not persisted: after a load, user code sees only the context
@@ -1518,6 +1532,8 @@ helpers in `test/support` are left to the implementor.
   - ...`:error` for a key never demanded
   - ...`{:error, graph_error}` for a key with no registered rule, even
     when the state holds records for it
+  - ...`{:error, graph_error}` for an invalid key (a string identity,
+    params that are not a map)
 - `fetch` accepts the key forms of `run` targets: `:foo` reads
   `{:default, :foo, %{}}`
 - `run` returns `{:error, error, workflow}` for the first failed target,
@@ -1530,6 +1546,11 @@ helpers in `test/support` are left to the implementor.
   different branches lists every leaf as a cause, in evaluation order
 - The computation error for a target that failed before a dump and a load
   is the same as the one returned by the run that failed it
+- The computation error is derived from the records: for a target failed
+  by a key that failed in an earlier run, its causes are those of that
+  earlier run
+- A second `run` of a failed target returns the same computation error
+- The target of a computation error is the first target with no value
 - The causes of a computation error hold the cleaned error of each leaf,
   with its kind: `:user_term`, `:bad_return`, `:error`, `:throw` or `:exit`
 - A second `run` on the returned workflow...
@@ -1552,6 +1573,8 @@ helpers in `test/support` are left to the implementor.
   restores the state: a run after the round trip calls no user code for
   recorded keys and returns the same values
 - A loaded workflow can be run, and rules can still be added to it
+- `dump` does not change the workflow: it can still be run
+- An empty workflow dumps and loads into an empty workflow
 - Terms survive the round trip as equal terms...
   - ...strings, numbers, booleans, `nil`, lists and string-keyed maps
   - ...atoms, atom-keyed maps, tuples, structs and dates
@@ -1562,7 +1585,9 @@ helpers in `test/support` are left to the implementor.
 - `%{"id" => 1}` and `%{"id" => 1.0}` are still two keys after a round
   trip through JSON
 - Dumping a loaded state that was not run produces the same data as the
-  original dump, including orphaned records and undecodable keys
+  original dump, including orphaned records
+- Dumping a loaded state that was not run produces the same data as the
+  original dump, including undecodable keys *(fixed dump)*
 - A failure record queried after a round trip equals the one before,
   including its time and kind
 - A `{:dep_failed, key}` record pointing to an orphaned key survives a
@@ -1594,12 +1619,14 @@ helpers in `test/support` are left to the implementor.
   - ...make `load` emit one warning listing the rules they belong to
   - ...are written back by `dump`
   - ...are never decoded: the removed rule's code is not involved
+    *(fixed dump)*
   - ...take no part in evaluation: demanding that key is a graph error
   - ...are found again when the rule is registered again under the same
     identity, before the load
   - ...stay orphaned when the rule is added to the workflow after the
     load: its keys are computed again, and `dump` writes the computed
     entries over the orphaned ones, with a warning naming the keys
+- `load` emits no warning when every record has a rule
 - Load never creates atoms... *(fixed dump)*
   - ...for an `ns`, `name` or alternative name with no registered rule
   - ...for params referencing an atom that does not exist

@@ -76,6 +76,7 @@ defmodule Ark.MixProject do
     [
       # Lib
       {:ecto, "~> 3.10", optional: true},
+      {:telemetry, "~> 1.0", optional: true},
 
       # Dev & Test
       {:ecto_sqlite3, "~> 0.26.0", only: :test},

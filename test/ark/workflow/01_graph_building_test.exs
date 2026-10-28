@@ -1,0 +1,831 @@
+defmodule Ark.Workflow.GraphBuildingTest.CompiledTuples do
+  alias Ark.Workflow
+
+  @graph Workflow.new()
+         |> Workflow.add_rule(:base, %{
+           alts: [default: %{deps: [], body: {__MODULE__, :base, [10]}}],
+           dump: {__MODULE__, :dump, []},
+           load: {__MODULE__, :load, []}
+         })
+         |> Workflow.add_rule(:total, %{
+           alts: [
+             default: %{
+               deps: [:base, {__MODULE__, :deps_of, [:base]}],
+               body: {__MODULE__, :total, []}
+             }
+           ]
+         })
+
+  def graph do
+    @graph
+  end
+
+  def base(_params, _deps, _ctx, n) do
+    {:ok, n}
+  end
+
+  def deps_of(_params, deps, _ctx, name) do
+    %{double: {:double, %{n: deps[name]}}}
+  end
+
+  def total(_params, deps, _ctx) do
+    {:ok, deps.base + deps.double}
+  end
+
+  def dump(value) do
+    value
+  end
+
+  def load(data) do
+    data
+  end
+end
+
+defmodule Ark.Workflow.GraphBuildingTest.CompiledCaptures do
+  alias Ark.Workflow
+
+  @graph Workflow.new()
+         |> Workflow.add_rule(:base, %{
+           alts: [default: %{deps: [], body: &__MODULE__.base/3}],
+           dump: &__MODULE__.dump/1,
+           load: &__MODULE__.load/1
+         })
+         |> Workflow.add_rule(:total, %{
+           alts: [
+             default: %{deps: [:base, &__MODULE__.deps_of/3], body: &__MODULE__.total/3}
+           ]
+         })
+
+  def graph do
+    @graph
+  end
+
+  def base(_params, _deps, _ctx) do
+    {:ok, 10}
+  end
+
+  def deps_of(_params, deps, _ctx) do
+    %{double: {:double, %{n: deps.base}}}
+  end
+
+  def total(_params, deps, _ctx) do
+    {:ok, deps.base + deps.double}
+  end
+
+  def dump(value) do
+    value
+  end
+
+  def load(data) do
+    data
+  end
+end
+
+defmodule Ark.Workflow.GraphBuildingTest.CompiledNs do
+  alias Ark.Workflow
+
+  @graph Workflow.new()
+         |> Workflow.add_ns(Ark.Workflow.GraphBuildingTest.Billing, fn g ->
+           g
+           |> Workflow.add_rule(:account, %{
+             alts: [default: %{deps: [], body: &__MODULE__.account/3}]
+           })
+           |> Workflow.add_rule({:default, :entry}, %{
+             alts: [
+               default: %{
+                 deps: [{Ark.Workflow.GraphBuildingTest.Billing, :account, %{}}],
+                 body: &__MODULE__.entry/3
+               }
+             ]
+           })
+         end)
+
+  def graph do
+    @graph
+  end
+
+  def account(_params, _deps, _ctx) do
+    {:ok, :the_account}
+  end
+
+  def entry(_params, deps, _ctx) do
+    {:ok, {:entry, Map.values(deps)}}
+  end
+end
+
+defmodule Ark.Workflow.GraphBuildingTest do
+  use ExUnit.Case, async: true
+
+  import Ark.Test.Mock
+  import Ark.Test.WorkflowHelpers
+
+  alias Ark.Workflow
+  alias Ark.Workflow.ComputationError
+  alias Ark.Workflow.GraphBuildingTest.CompiledCaptures
+  alias Ark.Workflow.GraphBuildingTest.CompiledNs
+  alias Ark.Workflow.GraphBuildingTest.CompiledTuples
+  alias Ark.Workflow.GraphError
+
+  defmodule NsA do
+  end
+
+  defmodule NsB do
+  end
+
+  defmodule Billing do
+  end
+
+  defp double_rule(wf) do
+    Workflow.add_rule(wf, :double, rule([], fn %{n: n}, _, _ -> {:ok, n * 2} end))
+  end
+
+  defp assert_rejected(rule_map) do
+    assert_raise GraphError, fn -> Workflow.add_rule(Workflow.new(), :r, rule_map) end
+  end
+
+  defp assert_rejected_dep(dep) do
+    assert_rejected(rule([dep], ok_body(1)))
+  end
+
+  describe "registering a rule" do
+    test "twice under the same {ns, name} is an error" do
+      wf = Workflow.add_rule(Workflow.new(), :a, const_rule(1))
+
+      assert_raise GraphError, fn -> Workflow.add_rule(wf, :a, const_rule(2)) end
+
+      assert_raise GraphError, fn ->
+        Workflow.add_rule(wf, {:default, :a}, const_rule(2))
+      end
+
+      wf = Workflow.add_rule(wf, {NsA, :a}, const_rule(1))
+      assert_raise GraphError, fn -> Workflow.add_rule(wf, {NsA, :a}, const_rule(2)) end
+    end
+
+    test "with an empty alternative list is an error" do
+      assert_rejected(%{alts: []})
+    end
+
+    test "with two alternatives of the same name is an error" do
+      alt = %{deps: [], body: ok_body(1)}
+      assert_rejected(%{alts: [one: alt, two: alt, one: alt]})
+    end
+
+    test "under a string ns or name is rejected" do
+      assert_raise GraphError, fn ->
+        Workflow.add_rule(Workflow.new(), Enum.random(["a"]), const_rule(1))
+      end
+
+      assert_raise GraphError, fn ->
+        Workflow.add_rule(Workflow.new(), {"Elixir.NsA", :a}, const_rule(1))
+      end
+
+      assert_raise GraphError, fn ->
+        Workflow.add_rule(Workflow.new(), {NsA, "a"}, const_rule(1))
+      end
+    end
+
+    test "with a string alternative name is rejected" do
+      assert_rejected(%{alts: [{"default", %{deps: [], body: ok_body(1)}}]})
+    end
+
+    test "with an ns, name or alternative name that is neither an atom nor a string is rejected" do
+      for bad <- [1, {:a, :b, :c}, [:a], %{}] do
+        assert_raise GraphError, fn ->
+          Workflow.add_rule(Workflow.new(), bad, const_rule(1))
+        end
+
+        assert_raise GraphError, fn ->
+          Workflow.add_rule(Workflow.new(), {bad, :a}, const_rule(1))
+        end
+
+        assert_raise GraphError, fn ->
+          Workflow.add_rule(Workflow.new(), {NsA, bad}, const_rule(1))
+        end
+
+        assert_rejected(%{alts: [{bad, %{deps: [], body: ok_body(1)}}]})
+      end
+    end
+
+    test "with nil, true or false as ns, name or alternative name is rejected" do
+      for bad <- [nil, true, false] do
+        assert_raise GraphError, fn ->
+          Workflow.add_rule(Workflow.new(), bad, const_rule(1))
+        end
+
+        assert_raise GraphError, fn ->
+          Workflow.add_rule(Workflow.new(), {bad, :a}, const_rule(1))
+        end
+
+        assert_raise GraphError, fn ->
+          Workflow.add_rule(Workflow.new(), {NsA, bad}, const_rule(1))
+        end
+
+        assert_rejected(%{alts: [{bad, %{deps: [], body: ok_body(1)}}]})
+      end
+    end
+
+    test "without alts is rejected" do
+      assert_rejected(%{})
+      assert_rejected(%{dump: fn x -> x end, load: fn x -> x end})
+    end
+
+    test "that is not a map is rejected" do
+      assert_rejected(alts: [default: %{deps: [], body: ok_body(1)}])
+      assert_rejected(nil)
+    end
+
+    test "with alts that is not a keyword list is rejected" do
+      assert_rejected(%{alts: %{default: %{deps: [], body: ok_body(1)}}})
+      assert_rejected(%{alts: [%{deps: [], body: ok_body(1)}]})
+    end
+
+    test "with an alternative without deps or without body is rejected" do
+      assert_rejected(%{alts: [default: %{body: ok_body(1)}]})
+      assert_rejected(%{alts: [default: %{deps: []}]})
+      assert_rejected(%{alts: [default: %{}]})
+    end
+
+    test "with an unknown key in the rule map or in an alternative map is rejected" do
+      assert_rejected(%{alts: [default: %{deps: [], body: ok_body(1)}], other: 1})
+      assert_rejected(%{alts: [default: %{deps: [], body: ok_body(1), other: 1}]})
+    end
+
+    test "with deps that is not a list is rejected" do
+      assert_rejected(%{alts: [default: %{deps: :a, body: ok_body(1)}]})
+      assert_rejected(%{alts: [default: %{deps: %{a: :a}, body: ok_body(1)}]})
+    end
+
+    test "registers the alternatives of alts in list order" do
+      log = start_log()
+
+      alt = fn name, result ->
+        {name,
+         %{
+           deps: [],
+           body: fn _, _, _ ->
+             track(log, name)
+             result
+           end
+         }}
+      end
+
+      wf =
+        Workflow.add_rule(Workflow.new(), :a, %{
+          alts: [
+            alt.(:zed, {:error, :x}),
+            alt.(:alpha, {:error, :x}),
+            alt.(:mid, {:ok, :done})
+          ]
+        })
+
+      wf = run!(wf, [:a])
+
+      assert :done == fetch!(wf, :a)
+      assert [:zed, :alpha, :mid] == logged(log)
+    end
+  end
+
+  test "an alternative named :default is tried in its list position like any other" do
+    log = start_log()
+
+    wf =
+      Workflow.add_rule(Workflow.new(), :a, %{
+        alts: [
+          first: %{
+            deps: [],
+            body: fn _, _, _ ->
+              track(log, :first)
+              {:error, :x}
+            end
+          },
+          default: %{
+            deps: [],
+            body: fn _, _, _ ->
+              track(log, :default)
+              {:error, :x}
+            end
+          },
+          last: %{
+            deps: [],
+            body: fn _, _, _ ->
+              track(log, :last)
+              {:ok, :last}
+            end
+          }
+        ]
+      })
+
+    wf = run!(wf, [:a])
+
+    assert :last == fetch!(wf, :a)
+    assert [:first, :default, :last] == logged(log)
+  end
+
+  describe "a rule identity" do
+    test "name is in the current namespace" do
+      wf = Workflow.add_rule(Workflow.new(), :a, const_rule(1))
+      wf = run!(wf, [{:default, :a, %{}}])
+      assert 1 == fetch!(wf, {:default, :a, %{}})
+    end
+
+    test "{ns, name} is in namespace ns" do
+      wf = Workflow.add_rule(Workflow.new(), {NsA, :a}, const_rule(1))
+
+      assert {:error, %GraphError{}, _} = Workflow.run(wf, [:a])
+
+      wf = run!(wf, [{NsA, :a, %{}}])
+      assert 1 == fetch!(wf, {NsA, :a, %{}})
+    end
+  end
+
+  describe "the same rule map registered under two identities" do
+    test "is two rules: a key of each is computed and recorded separately" do
+      {pid, body} = mock_fun(2, fn _, _, _ -> {:ok, make_ref()} end)
+      rule_map = rule([], body)
+
+      wf =
+        Workflow.new()
+        |> Workflow.add_rule(:one, rule_map)
+        |> Workflow.add_rule(:two, rule_map)
+
+      wf = run!(wf, [:one, :two])
+
+      verify(pid)
+      assert fetch!(wf, :one) != fetch!(wf, :two)
+    end
+
+    test "in two namespaces resolves its dependencies written without namespace in the namespace of each identity" do
+      rule_map = rule([:dep], deps_body())
+
+      wf =
+        Workflow.new()
+        |> Workflow.add_rule({NsA, :r}, rule_map)
+        |> Workflow.add_rule({NsB, :r}, rule_map)
+        |> Workflow.add_rule({NsA, :dep}, const_rule(:from_a))
+        |> Workflow.add_rule({NsB, :dep}, const_rule(:from_b))
+
+      wf = run!(wf, [{NsA, :r, %{}}, {NsB, :r, %{}}])
+
+      assert %{dep: :from_a} == fetch!(wf, {NsA, :r, %{}})
+      assert %{dep: :from_b} == fetch!(wf, {NsB, :r, %{}})
+    end
+  end
+
+  describe "a static dependency" do
+    test "naming a rule that is not registered makes run return a graph error before calling any user code" do
+      {pid, body} = mock_fun(0, ok_body(1))
+
+      wf =
+        Workflow.new()
+        |> Workflow.add_rule(:first, rule([], body))
+        |> Workflow.add_rule(:a, rule([:missing], ok_body(1)))
+
+      assert {:error, %GraphError{}, wf2} = Workflow.run(wf, [:first, :a])
+
+      verify(pid)
+      assert :error == Workflow.fetch(wf2, :first)
+    end
+
+    test "naming a rule that is not registered is a graph error even when no target demands it" do
+      {pid, body} = mock_fun(0, ok_body(1))
+
+      wf =
+        Workflow.new()
+        |> Workflow.add_rule(:first, rule([], body))
+        |> Workflow.add_rule(:other, rule([{NsA, :missing, %{}}], ok_body(1)))
+
+      assert {:error, %GraphError{}, _} = Workflow.run(wf, [:first])
+      verify(pid)
+    end
+
+    test "with a string ns or name is rejected when the rule is registered" do
+      assert_rejected_dep("b")
+      assert_rejected_dep({"b", %{}})
+      assert_rejected_dep({"Elixir.NsA", :b, %{}})
+      assert_rejected_dep({NsA, "b", %{}})
+    end
+
+    test "with nil, true or false as ns or name is rejected when the rule is registered" do
+      for bad <- [nil, true, false] do
+        assert_rejected_dep(bad)
+        assert_rejected_dep({bad, %{}})
+        assert_rejected_dep({bad, :b, %{}})
+        assert_rejected_dep({NsA, bad, %{}})
+      end
+    end
+
+    test "with params containing a pid, port, reference or function, at any depth, is rejected when the rule is registered" do
+      port = Port.open({:spawn, "true"}, [])
+
+      for bad <- [self(), port, make_ref(), fn -> :ok end, &String.upcase/1] do
+        assert_rejected_dep({:b, %{x: bad}})
+        assert_rejected_dep({NsA, :b, %{x: bad}})
+        assert_rejected_dep({:b, %{x: [1, %{"y" => {:ok, bad}}]}})
+        assert_rejected_dep({:b, %{bad => 1}})
+      end
+    end
+
+    test "written {ns, name} (forgotten params) is rejected as invalid params" do
+      assert_rejected_dep({NsA, :b})
+    end
+
+    test "with params that are not a map is rejected as invalid params" do
+      assert_rejected_dep({:b, [id: 1]})
+      assert_rejected_dep({:b, 1})
+      assert_rejected_dep({NsA, :b, 1})
+    end
+
+    test "naming a rule registered later in the graph is accepted" do
+      wf =
+        Workflow.new()
+        |> Workflow.add_rule(:a, rule([:b], deps_body()))
+        |> Workflow.add_rule(:b, const_rule(1))
+
+      wf = run!(wf, [:a])
+      assert %{b: 1} == fetch!(wf, :a)
+    end
+
+    test "that is neither a key, an alias map nor a function is rejected" do
+      assert_rejected_dep(1)
+      assert_rejected_dep([:b])
+      assert_rejected_dep({:a, :b, :c, :d})
+    end
+  end
+
+  test "the checks on static dependencies apply to the keys inside a static alias map" do
+    assert_rejected_dep(%{x: "b"})
+    assert_rejected_dep(%{x: {NsA, "b", %{}}})
+    assert_rejected_dep(%{x: nil})
+    assert_rejected_dep(%{x: {:b, %{p: self()}}})
+    assert_rejected_dep(%{x: {NsA, :b}})
+    assert_rejected_dep(%{x: {:b, [id: 1]}})
+    assert_rejected_dep(%{x: 1})
+  end
+
+  test "a static alias map whose value is a dependency function is rejected" do
+    assert_rejected_dep(%{x: fn _, _, _ -> :b end})
+    assert_rejected_dep(%{x: &CompiledCaptures.deps_of/3})
+    assert_rejected_dep(%{x: {CompiledTuples, :deps_of, [:base]}})
+  end
+
+  describe "two different static keys of one alternative exposed under the same deps key" do
+    test "are rejected under the same alias" do
+      assert_rejected(rule([%{x: :b}, %{x: :c}], ok_body(1)))
+      assert_rejected(rule([%{x: :b}, %{x: {:b, %{id: 1}}}], ok_body(1)))
+    end
+
+    test "are rejected as shadowing when an alias shadows the exposed form of another dependency" do
+      for deps <- [
+            [:b, %{b: :c}],
+            [%{b: :c}, :b],
+            [{:b, %{id: 1}}, %{{:b, %{id: 1}} => :c}],
+            [{NsA, :b, %{}}, %{{NsA, :b, %{}} => :c}]
+          ] do
+        e = assert_rejected(rule(deps, ok_body(1)))
+        assert :shadowing == e.kind
+      end
+    end
+  end
+
+  describe "the same static key listed twice in one alternative is accepted and demanded once" do
+    test "in two forms (:a and {ns, :a, %{}})" do
+      {pid, body} = mock_fun(1, ok_body(1))
+
+      wf =
+        Workflow.new()
+        |> Workflow.add_rule({NsA, :a}, rule([], body))
+        |> Workflow.add_rule(
+          {NsA, :r},
+          rule([:a, {NsA, :a, %{}}, {:a, %{}}], deps_body())
+        )
+
+      wf = run!(wf, [{NsA, :r, %{}}])
+
+      verify(pid)
+      assert %{a: 1} == fetch!(wf, {NsA, :r, %{}})
+    end
+
+    test "in two forms in the :default namespace" do
+      {pid, body} = mock_fun(1, ok_body(1))
+
+      wf =
+        Workflow.new()
+        |> Workflow.add_rule(:a, rule([], body))
+        |> Workflow.add_rule(:r, rule([:a, {:default, :a, %{}}], deps_body()))
+
+      wf = run!(wf, [:r])
+
+      verify(pid)
+      assert %{a: 1} == fetch!(wf, :r)
+    end
+
+    test "under the same alias in two alias maps" do
+      {pid, body} = mock_fun(1, ok_body(1))
+
+      wf =
+        Workflow.new()
+        |> Workflow.add_rule(:a, rule([], body))
+        |> Workflow.add_rule(:r, rule([%{x: :a}, %{x: {:a, %{}}}], deps_body()))
+
+      wf = run!(wf, [:r])
+
+      verify(pid)
+      assert %{x: 1} == fetch!(wf, :r)
+    end
+  end
+
+  test "two alternatives of one rule may use the same alias for different keys" do
+    wf =
+      Workflow.new()
+      |> Workflow.add_rule(:b, const_rule(:from_b))
+      |> Workflow.add_rule(:c, const_rule(:from_c))
+      |> Workflow.add_rule(:r, %{
+        alts: [
+          one: %{deps: [%{x: :b}], body: error_body()},
+          two: %{deps: [%{x: :c}], body: deps_body()}
+        ]
+      })
+
+    wf = run!(wf, [:r])
+    assert %{x: :from_c} == fetch!(wf, :r)
+  end
+
+  test "two alternatives of one rule may declare different dependency lists" do
+    wf =
+      Workflow.new()
+      |> Workflow.add_rule(:b, const_rule(:from_b))
+      |> Workflow.add_rule(:c, const_rule(:from_c))
+      |> Workflow.add_rule(:d, const_rule(:from_d))
+      |> Workflow.add_rule(:r, %{
+        alts: [
+          one: %{deps: [:b], body: error_body()},
+          two: %{deps: [:c, :d], body: deps_body()}
+        ]
+      })
+
+    wf = run!(wf, [:r])
+    assert %{c: :from_c, d: :from_d} == fetch!(wf, :r)
+  end
+
+  test "two rules with the same name in two namespaces are distinct rules" do
+    wf =
+      Workflow.new()
+      |> Workflow.add_rule({NsA, :r}, const_rule(:a))
+      |> Workflow.add_rule({NsB, :r}, const_rule(:b))
+      |> Workflow.add_rule(:r, const_rule(:default))
+
+    wf = run!(wf, [{NsA, :r, %{}}, {NsB, :r, %{}}, :r])
+
+    assert :a == fetch!(wf, {NsA, :r, %{}})
+    assert :b == fetch!(wf, {NsB, :r, %{}})
+    assert :default == fetch!(wf, :r)
+  end
+
+  describe "add_ns" do
+    test "registers the rules added by its callback in its namespace" do
+      wf = Workflow.add_ns(Workflow.new(), NsA, &Workflow.add_rule(&1, :a, const_rule(1)))
+
+      wf = run!(wf, [{NsA, :a, %{}}])
+      assert 1 == fetch!(wf, {NsA, :a, %{}})
+      assert {:error, %GraphError{}} = Workflow.fetch(wf, :a)
+    end
+
+    test "resolves the dependencies written without namespace in those rules to its namespace" do
+      wf =
+        Workflow.new()
+        |> Workflow.add_rule(:b, const_rule(:default_b))
+        |> Workflow.add_ns(NsA, fn g ->
+          g
+          |> Workflow.add_rule(:a, rule([:b, {:c, %{id: 1}}], deps_body()))
+          |> Workflow.add_rule(:b, const_rule(:ns_b))
+          |> Workflow.add_rule(:c, rule([], params_body()))
+        end)
+
+      wf = run!(wf, [{NsA, :a, %{}}])
+      assert %{:b => :ns_b, {:c, %{id: 1}} => %{id: 1}} == fetch!(wf, {NsA, :a, %{}})
+    end
+
+    test "restores the current namespace when the callback returns" do
+      wf =
+        Workflow.new()
+        |> Workflow.add_ns(NsA, &Workflow.add_rule(&1, :a, const_rule(:ns_a)))
+        |> Workflow.add_rule(:a, const_rule(:default_a))
+
+      wf = run!(wf, [:a, {NsA, :a, %{}}])
+      assert :default_a == fetch!(wf, :a)
+      assert :ns_a == fetch!(wf, {NsA, :a, %{}})
+    end
+
+    test "raises when the callback does not return a graph" do
+      assert_raise GraphError, fn ->
+        Workflow.add_ns(Workflow.new(), NsA, fn _ -> :oops end)
+      end
+
+      assert_raise GraphError, fn ->
+        Workflow.add_ns(Workflow.new(), NsA, fn g -> {:ok, g} end)
+      end
+    end
+  end
+
+  describe "nested add_ns calls" do
+    defp nested_graph do
+      Workflow.new()
+      |> Workflow.add_ns(NsA, fn g ->
+        g
+        |> Workflow.add_rule(:before, rule([:leaf], deps_body()))
+        |> Workflow.add_ns(NsB, fn g ->
+          g
+          |> Workflow.add_rule(:inner, rule([:leaf], deps_body()))
+          |> Workflow.add_rule(:leaf, const_rule(:leaf_b))
+        end)
+        |> Workflow.add_rule(:after, rule([:leaf], deps_body()))
+        |> Workflow.add_rule(:leaf, const_rule(:leaf_a))
+      end)
+      |> Workflow.add_rule(:top, rule([:leaf], deps_body()))
+      |> Workflow.add_rule(:leaf, const_rule(:leaf_default))
+    end
+
+    test "register the rules of the inner callback in the inner namespace" do
+      wf = run!(nested_graph(), [{NsB, :inner, %{}}])
+      assert %{leaf: :leaf_b} == fetch!(wf, {NsB, :inner, %{}})
+      assert {:error, %GraphError{}} = Workflow.fetch(wf, {NsA, :inner, %{}})
+    end
+
+    test "restore the enclosing namespace when the inner callback returns" do
+      wf = run!(nested_graph(), [{NsA, :after, %{}}])
+      assert %{leaf: :leaf_a} == fetch!(wf, {NsA, :after, %{}})
+      assert {:error, %GraphError{}} = Workflow.fetch(wf, {NsB, :after, %{}})
+      assert {:error, %GraphError{}} = Workflow.fetch(wf, :after)
+    end
+
+    test "resolve the dependencies written without namespace to the namespace of each rule" do
+      wf =
+        run!(nested_graph(), [{NsA, :before, %{}}, {NsB, :inner, %{}}, {NsA, :after, %{}}])
+
+      assert %{leaf: :leaf_a} == fetch!(wf, {NsA, :before, %{}})
+      assert %{leaf: :leaf_b} == fetch!(wf, {NsB, :inner, %{}})
+      assert %{leaf: :leaf_a} == fetch!(wf, {NsA, :after, %{}})
+    end
+
+    test "restore :default once the outermost callback returns" do
+      wf = run!(nested_graph(), [:top])
+      assert %{leaf: :leaf_default} == fetch!(wf, :top)
+    end
+
+    test "accept the same namespace at two levels" do
+      wf =
+        Workflow.new()
+        |> Workflow.add_ns(NsA, fn g ->
+          g
+          |> Workflow.add_ns(
+            NsA,
+            &Workflow.add_rule(&1, :inner, rule([:outer], deps_body()))
+          )
+          |> Workflow.add_rule(:outer, const_rule(:outer))
+        end)
+
+      wf = run!(wf, [{NsA, :inner, %{}}])
+      assert %{outer: :outer} == fetch!(wf, {NsA, :inner, %{}})
+    end
+  end
+
+  describe "add_rule with an identity {ns, name} inside an add_ns callback" do
+    test "does not change the current namespace" do
+      wf =
+        Workflow.add_ns(Workflow.new(), NsA, fn g ->
+          g
+          |> Workflow.add_rule({NsB, :b}, const_rule(:b))
+          |> Workflow.add_rule(:a, const_rule(:a))
+        end)
+
+      wf = run!(wf, [{NsA, :a, %{}}, {NsB, :b, %{}}])
+      assert :a == fetch!(wf, {NsA, :a, %{}})
+      assert :b == fetch!(wf, {NsB, :b, %{}})
+    end
+
+    test "with :default exposes an entry point" do
+      wf =
+        Workflow.add_ns(Workflow.new(), Billing, fn g ->
+          g
+          |> Workflow.add_rule(:account, const_rule(:account))
+          |> Workflow.add_rule(
+            {:default, :billing},
+            rule([{Billing, :account, %{}}], deps_body())
+          )
+        end)
+
+      wf = run!(wf, [:billing])
+      assert %{{Billing, :account, %{}} => :account} == fetch!(wf, :billing)
+    end
+  end
+
+  test "a graph built with add_ns can be stored in a module attribute" do
+    wf = run!(CompiledNs.graph(), [:entry])
+    assert {:entry, [:the_account]} == fetch!(wf, :entry)
+  end
+
+  describe "a graph whose user code is given as" do
+    test "{module, function, extra_args} tuples can be built at compile time and runs" do
+      graph = double_rule(CompiledTuples.graph())
+      wf = run!(graph, [:total])
+      assert 30 == fetch!(wf, :total)
+
+      wf = roundtrip(wf, graph)
+      assert 10 == fetch!(wf, :base)
+      assert 30 == fetch!(wf, :total)
+    end
+
+    test "remote captures can be built at compile time and runs" do
+      graph = double_rule(CompiledCaptures.graph())
+      wf = run!(graph, [:total])
+      assert 30 == fetch!(wf, :total)
+
+      wf = roundtrip(wf, graph)
+      assert 10 == fetch!(wf, :base)
+      assert 30 == fetch!(wf, :total)
+    end
+
+    test "tuples or captures, built at runtime, runs like the compiled graph" do
+      runtime =
+        Workflow.new()
+        |> Workflow.add_rule(:base, %{
+          alts: [default: %{deps: [], body: &CompiledCaptures.base/3}],
+          dump: &CompiledCaptures.dump/1,
+          load: &CompiledCaptures.load/1
+        })
+        |> Workflow.add_rule(:total, %{
+          alts: [
+            default: %{
+              deps: [:base, {CompiledTuples, :deps_of, [:base]}],
+              body: {CompiledTuples, :total, []}
+            }
+          ]
+        })
+        |> double_rule()
+
+      runtime = run!(runtime, [:total])
+      compiled = CompiledTuples.graph() |> double_rule() |> run!([:total])
+
+      for key <- [:base, :total, {:double, %{n: 10}}] do
+        assert fetch!(compiled, key) == fetch!(runtime, key)
+      end
+    end
+  end
+
+  describe "an anonymous function or a remote capture of the wrong arity is rejected when the rule is registered" do
+    test "as a body or a dependency function (arity 3)" do
+      for bad <- [fn -> :ok end, fn _ -> :ok end, fn _, _ -> :ok end, &String.upcase/1] do
+        assert_rejected(rule([], bad))
+        assert_rejected(rule([bad], ok_body(1)))
+      end
+    end
+
+    test "as :dump or :load (arity 1)" do
+      for bad <- [
+            fn -> :ok end,
+            fn _, _ -> :ok end,
+            &String.upcase/2,
+            &CompiledCaptures.base/3
+          ] do
+        assert_rejected(Map.put(const_rule(1), :dump, bad))
+        assert_rejected(Map.put(const_rule(1), :load, bad))
+      end
+    end
+
+    test "as a body, a tuple that is not {atom, atom, list} is rejected" do
+      assert_rejected(rule([], {CompiledTuples, :base}))
+      assert_rejected(rule([], {CompiledTuples, :base, 10}))
+      assert_rejected(rule([], {"Elixir.CompiledTuples", :base, []}))
+    end
+  end
+
+  test "a remote capture naming a function that does not exist yet is accepted when the rule is registered" do
+    capture = Function.capture(__MODULE__.NotYet, :body, 3)
+    dump = Function.capture(__MODULE__.NotYet, :dump, 1)
+
+    assert %Workflow{} =
+             Workflow.add_rule(Workflow.new(), :a, %{
+               alts: [default: %{deps: [capture], body: capture}],
+               dump: dump,
+               load: dump
+             })
+  end
+
+  test "a tuple or a capture naming a function that does not exist fails the alternative with kind :error when it is called" do
+    for body <- [
+          {__MODULE__.NotYet, :body, []},
+          Function.capture(__MODULE__.NotYet, :body, 3),
+          {__MODULE__, :not_a_function, [1]},
+          Function.capture(__MODULE__, :not_a_function, 3)
+        ] do
+      wf = Workflow.add_rule(Workflow.new(), :a, rule([], body))
+
+      assert {:error, %ComputationError{causes: [cause]}, _} = Workflow.run(wf, [:a])
+
+      assert %{key: {:default, :a, %{}}, alternative: :default, error: %{kind: :error}} =
+               cause
+
+      assert cause.error.error =~ "UndefinedFunctionError"
+    end
+  end
+end
