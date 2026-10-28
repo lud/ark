@@ -108,60 +108,60 @@ defmodule Ark.EctoCursorTest do
     end
 
     test "rejects invalid options" do
-      assert_raise ArgumentError, ~r/missing required option :order_by/, fn ->
+      assert_raise Ark.Opts.Error, ~r/missing required option :order_by/, fn ->
         EctoCursor.new([])
       end
 
-      assert_raise ArgumentError, ~r/expected :order_by/, fn ->
+      assert_raise Ark.Opts.Error, ~r/expected :order_by/, fn ->
         EctoCursor.new(order_by: [])
       end
 
-      assert_raise ArgumentError, ~r/expected :order_by/, fn ->
+      assert_raise Ark.Opts.Error, ~r/expected :order_by/, fn ->
         EctoCursor.new(order_by: "a")
       end
 
-      assert_raise ArgumentError, ~r/invalid order_by element/, fn ->
+      assert_raise Ark.Opts.Error, ~r/invalid order_by element/, fn ->
         EctoCursor.new(order_by: ["a"])
       end
 
-      assert_raise ArgumentError, ~r/invalid order_by element/, fn ->
+      assert_raise Ark.Opts.Error, ~r/invalid order_by element/, fn ->
         EctoCursor.new(order_by: [asc_nulls_first: :a])
       end
 
-      assert_raise ArgumentError, ~r/invalid order_by element/, fn ->
+      assert_raise Ark.Opts.Error, ~r/invalid order_by element/, fn ->
         EctoCursor.new(order_by: [:a | :b])
       end
 
-      assert_raise ArgumentError, ~r/positive integer/, fn ->
+      assert_raise Ark.Opts.Error, ~r/positive integer/, fn ->
         EctoCursor.new(order_by: :id, page_size: 0)
       end
     end
 
     test "rejects duplicate order_by fields" do
       for order_by <- [[:id, :id], [:id, desc: :id], [{:asc, :id}, :score, {:desc, :id}]] do
-        assert_raise ArgumentError, ~r/duplicate order_by field: :id$/, fn ->
+        assert_raise Ark.Opts.Error, ~r/duplicate order_by field: :id$/, fn ->
           EctoCursor.new(order_by: order_by)
         end
       end
     end
 
     test "names the invalid order_by element" do
-      assert_raise ArgumentError, ~r/invalid order_by element: "b"$/, fn ->
+      assert_raise Ark.Opts.Error, ~r/invalid order_by element: "b"$/, fn ->
         EctoCursor.new(order_by: [:a, "b", :c])
       end
     end
 
     test "rejects nil and booleans as fields" do
       for invalid <- [nil, true, false] do
-        assert_raise ArgumentError, ~r/expected :order_by/, fn ->
+        assert_raise Ark.Opts.Error, ~r/expected :order_by/, fn ->
           EctoCursor.new(order_by: invalid)
         end
 
-        assert_raise ArgumentError, ~r/invalid order_by element/, fn ->
+        assert_raise Ark.Opts.Error, ~r/invalid order_by element/, fn ->
           EctoCursor.new(order_by: [:id, invalid])
         end
 
-        assert_raise ArgumentError, ~r/invalid order_by element/, fn ->
+        assert_raise Ark.Opts.Error, ~r/invalid order_by element/, fn ->
           EctoCursor.new(order_by: [asc: :id, desc: invalid])
         end
       end
@@ -278,11 +278,11 @@ defmodule Ark.EctoCursorTest do
       cursor = EctoCursor.new(order_by: :id, page_size: 10)
 
       for invalid <- [false, 0, -1] do
-        assert_raise ArgumentError, ~r/positive integer/, fn ->
+        assert_raise Ark.Opts.Error, ~r/positive integer/, fn ->
           EctoCursor.query(cursor, TestItem, page_size: invalid)
         end
 
-        assert_raise ArgumentError, ~r/positive integer/, fn ->
+        assert_raise Ark.Opts.Error, ~r/positive integer/, fn ->
           EctoCursor.fetch_page(cursor, TestItem, repo(ctx), page_size: invalid)
         end
       end
@@ -988,7 +988,7 @@ defmodule Ark.EctoCursorTest do
     test "raises on invalid options even with a stored cursor" do
       stored = EctoCursor.new(order_by: :id)
 
-      assert_raise ArgumentError, fn ->
+      assert_raise Ark.Opts.Error, fn ->
         EctoCursor.resume(stored, order_by: :id, page_size: -1)
       end
     end
@@ -1010,7 +1010,7 @@ defmodule Ark.EctoCursorTest do
 
     test "rejects a binding that is not an atom or is a boolean" do
       for invalid <- ["target", true, false, 1] do
-        assert_raise ArgumentError,
+        assert_raise Ark.Opts.Error,
                      ~r/invalid value for option :binding in Ark.EctoCursor.new\/1/,
                      fn ->
                        EctoCursor.new(order_by: :id, binding: invalid)
@@ -1129,7 +1129,7 @@ defmodule Ark.EctoCursorTest do
 
   describe "unknown options" do
     test "are rejected by new/1" do
-      assert_raise ArgumentError, ~r/pagesize/, fn ->
+      assert_raise Ark.Opts.Error, ~r/pagesize/, fn ->
         EctoCursor.new(order_by: :id, pagesize: 3)
       end
     end
@@ -1138,11 +1138,11 @@ defmodule Ark.EctoCursorTest do
       stored = EctoCursor.new(order_by: :id)
 
       for cursor <- [nil, stored] do
-        assert_raise ArgumentError, ~r/pagesize/, fn ->
+        assert_raise Ark.Opts.Error, ~r/pagesize/, fn ->
           EctoCursor.resume(cursor, order_by: :id, pagesize: 3)
         end
 
-        assert_raise ArgumentError, ~r/pagesize/, fn ->
+        assert_raise Ark.Opts.Error, ~r/pagesize/, fn ->
           EctoCursor.resume!(cursor, order_by: :id, pagesize: 3)
         end
       end
@@ -1154,15 +1154,15 @@ defmodule Ark.EctoCursorTest do
       for {key, _} = opt <- [pagesize: 3, binding: :target, order_by: :name] do
         pattern = ~r/#{key}/
 
-        assert_raise ArgumentError, pattern, fn ->
+        assert_raise Ark.Opts.Error, pattern, fn ->
           EctoCursor.query(cursor, joined_query(), [opt])
         end
 
-        assert_raise ArgumentError, pattern, fn ->
+        assert_raise Ark.Opts.Error, pattern, fn ->
           EctoCursor.fetch_page(cursor, joined_query(), &never_called/1, [opt])
         end
 
-        assert_raise ArgumentError, pattern, fn ->
+        assert_raise Ark.Opts.Error, pattern, fn ->
           EctoCursor.stream(cursor, joined_query(), &never_called/1, [opt])
         end
       end
@@ -1206,13 +1206,13 @@ defmodule Ark.EctoCursorTest do
       cursor = EctoCursor.new(order_by: [:score, :id], page_size: 10)
 
       for invalid <- [1, "true"] do
-        assert_raise ArgumentError,
+        assert_raise Ark.Opts.Error,
                      ~r/invalid value for option :use_index .*expected a boolean/,
                      fn ->
                        EctoCursor.query(cursor, TestItem, use_index: invalid)
                      end
 
-        assert_raise ArgumentError,
+        assert_raise Ark.Opts.Error,
                      ~r/invalid value for option :use_index .*expected a boolean/,
                      fn ->
                        EctoCursor.fetch_page(cursor, TestItem, &never_called/1,
@@ -1263,11 +1263,11 @@ defmodule Ark.EctoCursorTest do
         EctoCursor.stream(EctoCursor.new(order_by: :id), TestItem, &never_called/1)
       end
 
-      assert_raise ArgumentError, ~r/:page_size/, fn ->
+      assert_raise Ark.Opts.Error, ~r/:page_size/, fn ->
         EctoCursor.stream(cursor, TestItem, &never_called/1, page_size: 0)
       end
 
-      assert_raise ArgumentError, ~r/:use_index/, fn ->
+      assert_raise Ark.Opts.Error, ~r/:use_index/, fn ->
         EctoCursor.stream(cursor, TestItem, &never_called/1, use_index: 1)
       end
 

@@ -205,7 +205,7 @@ if Code.ensure_loaded?(Ecto.Query) do
     * `:binding` - The named binding of the query that holds the sort fields.
       Defaults to the root source of the query.
 
-    Raises an `ArgumentError` for invalid or unknown options.
+    Raises an `Ark.Opts.Error` for invalid, unknown or missing options.
     """
     @spec new(new_opts) :: t
     def new(opts) do
@@ -213,13 +213,15 @@ if Code.ensure_loaded?(Ecto.Query) do
     end
 
     defp new_cursor!(opts, subject) do
-      case Ark.Opts.validate!(opts, @new_opts_defaults, subject, &validate_new_opt/2) do
-        %{order_by: order_by, page_size: page_size, binding: binding} ->
-          %__MODULE__{order_by: order_by, page_size: page_size, binding: binding}
+      %{order_by: order_by, page_size: page_size, binding: binding} =
+        Ark.Opts.validate!(
+          opts,
+          @new_opts_defaults,
+          [subject: subject, required: [:order_by]],
+          &validate_new_opt/2
+        )
 
-        _ ->
-          raise ArgumentError, "missing required option :order_by in #{subject}"
-      end
+      %__MODULE__{order_by: order_by, page_size: page_size, binding: binding}
     end
 
     @doc """
@@ -234,7 +236,8 @@ if Code.ensure_loaded?(Ecto.Query) do
 
     Returns `{:error, %Ark.EctoCursor.MismatchError{}}` when the sort orders
     differ, for instance after a change of the sort fields in the code that
-    stored the cursor. Raises an `ArgumentError` for invalid or unknown options.
+    stored the cursor. Raises an `Ark.Opts.Error` for invalid, unknown or missing
+    options.
     """
     @spec resume(t | nil, new_opts) ::
             {:ok, t} | {:error, Ark.EctoCursor.MismatchError.t()}
@@ -294,9 +297,9 @@ if Code.ensure_loaded?(Ecto.Query) do
       redundant `>=` or `<=` condition so the database can seek an index on the
       sort fields. Defaults to `true`.
 
-    Raises an `ArgumentError` for invalid options or when the base query does
-    not fit the cursor, see the "Base queries" section of the module
-    documentation.
+    Raises an `Ark.Opts.Error` for invalid options, and an `ArgumentError` when
+    the base query does not fit the cursor, see the "Base queries" section of
+    the module documentation.
     """
     @spec query(t, Ecto.Queryable.t(), query_opts) :: Ecto.Query.t()
     def query(%__MODULE__{} = cursor, q, opts \\ []) do
@@ -332,9 +335,10 @@ if Code.ensure_loaded?(Ecto.Query) do
     Each row must be a map or a struct holding the sort fields, under atom or
     string keys.
 
-    The options are the same as for `query/3`. Raises an `ArgumentError` for
-    invalid options, a base query that does not fit the cursor, or when the last
-    row of the page does not hold the sort fields or holds a `nil` sort value.
+    The options are the same as for `query/3`. Raises an `Ark.Opts.Error` for
+    invalid options. Raises an `ArgumentError` for a base query that does not
+    fit the cursor, or when the last row of the page does not hold the sort
+    fields or holds a `nil` sort value.
     """
     @spec fetch_page(t, Ecto.Queryable.t(), executor, query_opts) ::
             Ark.EctoCursor.Page.t()
@@ -423,6 +427,8 @@ if Code.ensure_loaded?(Ecto.Query) do
 
     defp validate_new_opt(:order_by, value) do
       {:ok, Ark.EctoCursor.OrderBy.cast!(value)}
+    rescue
+      e in ArgumentError -> {:error, e}
     end
 
     defp validate_new_opt(:page_size, value) do
@@ -444,7 +450,12 @@ if Code.ensure_loaded?(Ecto.Query) do
 
     defp query_opts!(cursor, opts, subject) do
       %{page_size: page_size, use_index: use_index?} =
-        Ark.Opts.validate!(opts, @query_opts_defaults, subject, &validate_query_opt/2)
+        Ark.Opts.validate!(
+          opts,
+          @query_opts_defaults,
+          [subject: subject],
+          &validate_query_opt/2
+        )
 
       {page_size!(cursor, page_size), use_index?}
     end
