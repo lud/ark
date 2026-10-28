@@ -239,6 +239,31 @@ defmodule Ark.OptsTest do
                Opts.any_of(["a"], validators)
     end
 
+    test "all_of" do
+      non_empty = fn
+        [] -> {:error, "a non-empty list"}
+        list -> {:ok, list}
+      end
+
+      validators = [Opts.list_of(&Opts.atom/1), non_empty]
+      assert {:ok, [:a]} = Opts.all_of([:a], validators)
+      assert {:error, "a list"} = Opts.all_of(:a, validators)
+      assert {:error, "a non-empty list"} = Opts.all_of([], validators)
+    end
+
+    test "all_of passes the value returned by each validator to the next one" do
+      validator =
+        Opts.all_of([
+          &Opts.string/1,
+          &{:ok, String.upcase(&1)},
+          &Opts.member_of(&1, ["A"])
+        ])
+
+      assert {:ok, "A"} = validator.("a")
+      assert {:error, "one of \"A\""} = validator.("b")
+      assert {:error, "a string"} = validator.(:a)
+    end
+
     test "list_of" do
       assert {:ok, []} = Opts.list_of([], &Opts.atom/1)
       assert {:ok, [:a, :b]} = Opts.list_of([:a, :b], &Opts.atom/1)

@@ -89,8 +89,8 @@ defmodule Ark.Opts do
   return `{:ok, value}` or `{:error, expected}`, so a callback clause can return
   their result directly. `member_of/2` accepts the values of a given list.
 
-  The combinators `any_of/2`, `nullable/2` and `list_of/2` check a value with
-  other validators. Their arity 1 variants, like `member_of/1`, return a
+  The combinators `any_of/2`, `all_of/2`, `nullable/2` and `list_of/2` check a
+  value with other validators. Their arity 1 variants, like `member_of/1`, return a
   validator function, so they compose into nested validators.
 
       iex> validator =
@@ -550,6 +550,56 @@ defmodule Ark.Opts do
 
   defp any_of(_value, [], expected_acc) do
     {:error, expected_acc |> :lists.reverse() |> Enum.join(" or ")}
+  end
+
+  @doc """
+  Returns a validator that accepts the values accepted by all of `validators`.
+
+  See `all_of/2`.
+
+      iex> validator = Ark.Opts.all_of([&Ark.Opts.string/1, &{:ok, String.trim(&1)}])
+      iex> validator.("  hello ")
+      {:ok, "hello"}
+  """
+  @spec all_of([(term -> result), ...]) :: (term -> result)
+  def all_of([_ | _] = validators) do
+    &all_of(&1, validators)
+  end
+
+  @doc """
+  Validates `value` with each of `validators` in order, and returns the result
+  of the last one.
+
+  The `validators` argument is a non-empty list. Each validator receives the
+  value returned by the previous one, so a validator can rely on the checks and
+  the normalization done before it. Validation stops at the first error, which
+  is returned as is.
+
+      iex> non_empty = fn
+      ...>   [] -> {:error, "a non-empty list"}
+      ...>   list -> {:ok, list}
+      ...> end
+      iex> Ark.Opts.all_of([:a], [Ark.Opts.list_of(&Ark.Opts.atom/1), non_empty])
+      {:ok, [:a]}
+      iex> Ark.Opts.all_of([], [Ark.Opts.list_of(&Ark.Opts.atom/1), non_empty])
+      {:error, "a non-empty list"}
+      iex> Ark.Opts.all_of(:a, [Ark.Opts.list_of(&Ark.Opts.atom/1), non_empty])
+      {:error, "a list"}
+  """
+  @spec all_of(term, [(term -> result), ...]) :: result
+  def all_of(value, [_ | _] = validators) do
+    all_of_reduce(value, validators)
+  end
+
+  defp all_of_reduce(value, [validator | validators]) do
+    case validator.(value) do
+      {:ok, value} -> all_of_reduce(value, validators)
+      {:error, _} = error -> error
+    end
+  end
+
+  defp all_of_reduce(value, []) do
+    {:ok, value}
   end
 
   @doc """
