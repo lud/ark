@@ -69,8 +69,9 @@ This module provides base functions to work with ok/error tuples.
 
 ### `Ark.Opts`
 
-This module validates keyword list options with a callback and merges them
-over defaults, with helpers to check the option values.
+This module validates options, given as a keyword list or a map, with a
+callback and merges them over defaults, with helpers to check the option
+values.
 
 ```elixir
 Ark.Opts.validate!([timeout: 500], %{timeout: 5000, retry: true}, fn

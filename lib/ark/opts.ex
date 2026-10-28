@@ -1,6 +1,6 @@
 defmodule Ark.Opts do
   @moduledoc ~S"""
-  Validates keyword list options with a callback and merges them over defaults.
+  Validates options with a callback and merges them over defaults.
 
   `validate!/3` calls the validator callback with the key and value of each
   given option. The callback checks the value, usually with one of the helpers
@@ -23,6 +23,15 @@ defmodule Ark.Opts do
       ...> end)
       {:error, %ArgumentError{message: "invalid value for option :timeout, expected a positive integer, got: 0"}}
 
+  The options are a keyword list or a map with atom keys.
+
+      iex> Ark.Opts.validate!(%{timeout: 500}, %{timeout: 5000, retry: true}, fn
+      ...>   :timeout, value -> Ark.Opts.pos_integer(value)
+      ...>   :retry, value -> Ark.Opts.boolean(value)
+      ...>   _, _ -> :unknown
+      ...> end)
+      %{timeout: 500, retry: true}
+
   ### Validator callback
 
   The callback receives the option key and the option value, and returns one
@@ -35,9 +44,9 @@ defmodule Ark.Opts do
     after "expected" in the error message.
   * `:unknown` - The key is not a supported option.
 
-  Options are validated in the order they are given, and validation stops at
-  the first error. An option given twice is also an error. The defaults are
-  merged as they are, so they hold values in their final form.
+  Validation stops at the first error. Options in a keyword list are validated
+  in the order they are given, and a key given twice is also an error. The
+  defaults are merged as they are, so they hold values in their final form.
 
   In a module, a named function with one clause per option is a convenient
   validator. The optional subject argument names the caller in error messages.
@@ -105,8 +114,9 @@ defmodule Ark.Opts do
   @doc false
   def __ark__(:doc) do
     """
-    This module validates keyword list options with a callback and merges them
-    over defaults, with helpers to check the option values.
+    This module validates options, given as a keyword list or a map, with a
+    callback and merges them over defaults, with helpers to check the option
+    values.
 
     ```elixir
     Ark.Opts.validate!([timeout: 500], %{timeout: 5000, retry: true}, fn
@@ -145,8 +155,8 @@ defmodule Ark.Opts do
   end
 
   @doc """
-  Validates the `opts` keyword list with the `fun` callback and merges the
-  validated options over `defaults`.
+  Validates `opts` with the `fun` callback and merges the validated options
+  over `defaults`.
 
       iex> Ark.Opts.validate([level: :debug], %{level: :info}, "MyApp.log/2", fn
       ...>   :level, value -> Ark.Opts.member_of(value, [:debug, :info, :error])
@@ -156,7 +166,7 @@ defmodule Ark.Opts do
 
   The arguments are:
 
-  * `opts` - The options to validate, a keyword list.
+  * `opts` - The options to validate, a keyword list or a map with atom keys.
   * `defaults` - A map of values for the options that are not given.
   * `subject` - An optional string naming the caller, such as
     `"MyApp.log/2"`, included in error messages.
@@ -165,9 +175,9 @@ defmodule Ark.Opts do
     module documentation for its return values.
 
   Returns `{:ok, map}` with the defaults and the values returned by the
-  callback. Returns `{:error, %ArgumentError{}}` when `opts` is not a keyword
-  list, when an option is given twice, or when the callback returns
-  `{:error, expected}` or `:unknown`.
+  callback. Returns `{:error, %ArgumentError{}}` when `opts` is a struct or is
+  not a keyword list or a map with atom keys, when an option is given twice, or
+  when the callback returns `{:error, expected}` or `:unknown`.
 
       iex> Ark.Opts.validate([color: :red], %{}, "MyApp.log/2", fn _, _ -> :unknown end)
       {:error, %ArgumentError{message: "unknown option :color in MyApp.log/2"}}
@@ -180,7 +190,7 @@ defmodule Ark.Opts do
   def validate(opts, defaults, subject \\ nil, fun)
       when is_map(defaults) and (is_binary(subject) or is_nil(subject)) and
              is_function(fun, 2) do
-    case reduce(opts, %{}, subject, fun) do
+    case reduce(to_list(opts), %{}, subject, fun) do
       {:ok, given} -> {:ok, Map.merge(defaults, given)}
       {:error, message} -> {:error, ArgumentError.exception(message)}
     end
@@ -188,36 +198,49 @@ defmodule Ark.Opts do
     :throw, {__MODULE__, :invalid_shape} ->
       {:error,
        ArgumentError.exception(
-         "expected options#{in_subject(subject)} to be a keyword list, got: #{inspect(opts)}"
+         "expected options#{in_subject(subject)} to be a keyword list or a map, " <>
+           "got: #{inspect(opts)}"
        )}
+  end
+
+  defp to_list(opts) when is_list(opts) do
+    opts
+  end
+
+  defp to_list(opts) when is_map(opts) and not is_struct(opts) do
+    Map.to_list(opts)
+  end
+
+  defp to_list(_opts) do
+    throw({__MODULE__, :invalid_shape})
   end
 
   defp reduce([], acc, _subject, _fun) do
     {:ok, acc}
   end
 
+  defp reduce([{key, _} | _], acc, subject, _fun) when is_map_key(acc, key) do
+    {:error, "duplicate option #{inspect(key)}#{in_subject(subject)}"}
+  end
+
   defp reduce([{key, value} | rest], acc, subject, fun) when is_atom(key) do
-    if Map.has_key?(acc, key) do
-      {:error, "duplicate option #{inspect(key)}#{in_subject(subject)}"}
-    else
-      case fun.(key, value) do
-        {:ok, value} ->
-          reduce(rest, Map.put(acc, key, value), subject, fun)
+    case fun.(key, value) do
+      {:ok, value} ->
+        reduce(rest, Map.put(acc, key, value), subject, fun)
 
-        {:error, expected} when is_binary(expected) ->
-          {:error,
-           "invalid value for option #{inspect(key)}#{in_subject(subject)}, " <>
-             "expected #{expected}, got: #{inspect(value)}"}
+      {:error, expected} when is_binary(expected) ->
+        {:error,
+         "invalid value for option #{inspect(key)}#{in_subject(subject)}, " <>
+           "expected #{expected}, got: #{inspect(value)}"}
 
-        :unknown ->
-          {:error, "unknown option #{inspect(key)}#{in_subject(subject)}"}
+      :unknown ->
+        {:error, "unknown option #{inspect(key)}#{in_subject(subject)}"}
 
-        other ->
-          raise ArgumentError,
-                "invalid validator return value for option #{inspect(key)}#{in_subject(subject)}, " <>
-                  "expected {:ok, value}, {:error, expected} with a string, or :unknown, " <>
-                  "got: #{inspect(other)}"
-      end
+      other ->
+        raise ArgumentError,
+              "invalid validator return value for option #{inspect(key)}#{in_subject(subject)}, " <>
+                "expected {:ok, value}, {:error, expected} with a string, or :unknown, " <>
+                "got: #{inspect(other)}"
     end
   end
 

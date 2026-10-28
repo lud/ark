@@ -76,7 +76,7 @@ defmodule Ark.OptsTest do
 
     test "raises on non tuple element" do
       assert_raise ArgumentError,
-                   "expected options to be a keyword list, got: [:cast]",
+                   "expected options to be a keyword list or a map, got: [:cast]",
                    fn ->
                      Opts.validate!([:cast], @defaults, &validate_opt/2)
                    end
@@ -84,7 +84,7 @@ defmodule Ark.OptsTest do
 
     test "raises on non atom key" do
       assert_raise ArgumentError,
-                   ~s(expected options in subj to be a keyword list, got: [{"cast", true}]),
+                   ~s(expected options in subj to be a keyword list or a map, got: [{"cast", true}]),
                    fn ->
                      Opts.validate!([{"cast", true}], @defaults, "subj", &validate_opt/2)
                    end
@@ -92,7 +92,7 @@ defmodule Ark.OptsTest do
 
     test "raises on improper list with the whole options" do
       assert_raise ArgumentError,
-                   "expected options to be a keyword list, got: [{:cast, true} | :sort]",
+                   "expected options to be a keyword list or a map, got: [{:cast, true} | :sort]",
                    fn ->
                      Opts.validate!([{:cast, true} | :sort], @defaults, &validate_opt/2)
                    end
@@ -116,11 +116,38 @@ defmodule Ark.OptsTest do
       end
     end
 
-    test "raises on non list options" do
+    test "accepts map options" do
+      assert %{cast: false, sort: :asc, count: 3} ==
+               Opts.validate!(%{cast: false, count: 3}, @defaults, &validate_opt/2)
+    end
+
+    test "raises on invalid value in map options" do
       assert_raise ArgumentError,
-                   "expected options to be a keyword list, got: %{cast: true}",
+                   "invalid value for option :cast, expected a boolean, got: :yes",
+                   fn -> Opts.validate!(%{cast: :yes}, @defaults, &validate_opt/2) end
+    end
+
+    test "raises on non atom key in map options" do
+      assert_raise ArgumentError,
+                   ~s(expected options to be a keyword list or a map, got: %{"cast" => true}),
                    fn ->
-                     Opts.validate!(%{cast: true}, @defaults, &validate_opt/2)
+                     Opts.validate!(%{"cast" => true}, @defaults, &validate_opt/2)
+                   end
+    end
+
+    test "raises on struct options" do
+      assert_raise ArgumentError,
+                   "expected options to be a keyword list or a map, got: ~D[2026-01-01]",
+                   fn ->
+                     Opts.validate!(~D[2026-01-01], @defaults, &validate_opt/2)
+                   end
+    end
+
+    test "raises on options that are neither a list nor a map" do
+      assert_raise ArgumentError,
+                   "expected options in subj to be a keyword list or a map, got: {:cast, true}",
+                   fn ->
+                     Opts.validate!({:cast, true}, @defaults, "subj", &validate_opt/2)
                    end
     end
 
