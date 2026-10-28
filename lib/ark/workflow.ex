@@ -633,7 +633,13 @@ defmodule Ark.Workflow do
         throw({:graph_error, cycle_error(key, frame, st), st})
 
       not is_map_key(st.rules, {elem(key, 0), elem(key, 1)}) ->
-        record = computation_record(:error, "no rule registered for #{format_key(key)}")
+        record =
+          computation_record(
+            :error,
+            "no rule registered for #{format_key(key)}",
+            unknown_rule(key, nil)
+          )
+
         alt_failed(frame, record, st)
 
       true ->
@@ -670,10 +676,14 @@ defmodule Ark.Workflow do
         })
 
       {:ok, {:error, reason}} ->
-        alt_failed(frame, computation_record(:user_term, user_term_message(reason)), st)
+        alt_failed(
+          frame,
+          computation_record(:user_term, user_term_message(reason), reason),
+          st
+        )
 
       {:ok, other} ->
-        alt_failed(frame, computation_record(:bad_return, inspect(other)), st)
+        alt_failed(frame, computation_record(:bad_return, inspect(other), other), st)
 
       {:raised, record} ->
         alt_failed(frame, record, st)
@@ -815,7 +825,12 @@ defmodule Ark.Workflow do
     {:ok, invoke(Middleware.chain(st.middlewares, kind, meta, innermost_call(fun, args)))}
   catch
     kind, payload ->
-      {:raised, computation_record(kind, format_caught(kind, payload, __STACKTRACE__))}
+      {:raised,
+       computation_record(
+         kind,
+         format_caught(kind, payload, __STACKTRACE__),
+         Exception.normalize(kind, payload, __STACKTRACE__)
+       )}
   end
 
   defp format_caught(kind, payload, stacktrace) do
@@ -842,8 +857,9 @@ defmodule Ark.Workflow do
     apply(m, f, args)
   end
 
-  defp computation_record(kind, message) do
-    {:computation_error, %{at: DateTime.utc_now(), kind: kind, error: message}}
+  defp computation_record(kind, message, reason) do
+    {:computation_error,
+     %{at: DateTime.utc_now(), kind: kind, message: message, reason: reason}}
   end
 
   defp user_term_message(reason) do
@@ -924,7 +940,7 @@ defmodule Ark.Workflow do
   end
 
   defp describe_attempt({:computation_error, error}, alt, _st, depth, lines, seen) do
-    {[{depth, "alternative #{inspect(alt)}: #{error.kind}: #{error.error}"} | lines],
+    {[{depth, "alternative #{inspect(alt)}: #{error.kind}: #{error.message}"} | lines],
      seen}
   end
 
