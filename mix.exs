@@ -50,7 +50,7 @@ defmodule Ark.MixProject do
   def application do
     case Mix.env() do
       :test -> [extra_applications: [:sasl, :logger]]
-      _ -> []
+      _ -> [extra_applications: [:logger]]
     end
   end
 
