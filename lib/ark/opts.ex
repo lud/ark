@@ -14,14 +14,19 @@ defmodule Ark.Opts do
       ...> end)
       %{timeout: 500, retry: true}
 
-  `validate/3` returns the error as an `ArgumentError` instead of raising it.
-  The message names the option, the expected value and the given value.
+  `validate/3` returns the error as an `Ark.Opts.Error` instead of raising it.
+  The error holds the path to the option, the given value and the reason
+  returned by the callback, and its message names them.
 
-      iex> Ark.Opts.validate([timeout: 0], %{timeout: 5000}, fn
-      ...>   :timeout, value -> Ark.Opts.pos_integer(value)
-      ...>   _, _ -> :unknown
-      ...> end)
-      {:error, %ArgumentError{message: "invalid value for option :timeout, expected a positive integer, got: 0"}}
+      iex> {:error, error} =
+      ...>   Ark.Opts.validate([timeout: 0], %{timeout: 5000}, fn
+      ...>     :timeout, value -> Ark.Opts.pos_integer(value)
+      ...>     _, _ -> :unknown
+      ...>   end)
+      iex> error
+      %Ark.Opts.Error{kind: :invalid_value, path: [:timeout], value: 0, reason: "a positive integer"}
+      iex> Exception.message(error)
+      "invalid value for option :timeout, expected a positive integer, got: 0"
 
   The options are a keyword list or a map with atom keys.
 
@@ -39,24 +44,26 @@ defmodule Ark.Opts do
 
   * `{:ok, value}` - The option is valid. The returned value is stored in the
     result, so the callback can also normalize the value.
-  * `{:error, expected}` - The option is invalid. `expected` is a string
-    describing the accepted values, such as `"a positive integer"`, which reads
-    after "expected" in the error message.
+  * `{:error, reason}` - The option is invalid. A string reason describes the
+    accepted values, such as `"a positive integer"`, which reads after
+    "expected" in the error message. Any other reason is stored in the error as
+    it is, see "Nested options and error reasons" below.
   * `:unknown` - The key is not a supported option.
 
   Validation stops at the first error. Options in a keyword list are validated
   in the order they are given, and a key given twice is also an error. The
+  `:required` option of `validate/4` lists the keys that must be given. The
   defaults are merged as they are, so they hold values in their final form.
 
   In a module, a named function with one clause per option is a convenient
-  validator. The optional subject argument names the caller in error messages.
+  validator. The `:subject` option names the caller in error messages.
 
       defmodule MyApp.Client do
         @defaults %{timeout: 5000, retries: 3}
 
         def get(url, opts \\ []) do
           %{timeout: timeout, retries: retries} =
-            Ark.Opts.validate!(opts, @defaults, "MyApp.Client.get/2", &validate_opt/2)
+            Ark.Opts.validate!(opts, @defaults, [subject: "MyApp.Client.get/2"], &validate_opt/2)
 
           MyApp.HTTP.get(url, timeout: timeout, retries: retries)
         end
@@ -77,17 +84,51 @@ defmodule Ark.Opts do
   Calling `MyApp.Client.get("/", retries: -1)` raises the same error as this
   direct call, with the subject in the message.
 
-      iex> Ark.Opts.validate!([retries: -1], %{retries: 3}, "MyApp.Client.get/2", fn
+      iex> Ark.Opts.validate!([retries: -1], %{retries: 3}, [subject: "MyApp.Client.get/2"], fn
       ...>   :retries, value -> Ark.Opts.non_neg_integer(value)
       ...>   _, _ -> :unknown
       ...> end)
-      ** (ArgumentError) invalid value for option :retries in MyApp.Client.get/2, expected a non-negative integer, got: -1
+      ** (Ark.Opts.Error) invalid value for option :retries in MyApp.Client.get/2, expected a non-negative integer, got: -1
+
+  ### Nested options and error reasons
+
+  A callback can validate a nested option with `validate/4`. The error of the
+  nested validation is returned with the key of the enclosing option prepended
+  to its path, and `list_of/2` prepends the index of the element. The message
+  joins the path with `/`.
+
+      iex> Ark.Opts.validate!([pool: [size: 0]], %{}, fn
+      ...>   :pool, value ->
+      ...>     Ark.Opts.validate(value, %{size: 10}, fn
+      ...>       :size, size -> Ark.Opts.pos_integer(size)
+      ...>       _, _ -> :unknown
+      ...>     end)
+      ...>
+      ...>   _, _ -> :unknown
+      ...> end)
+      ** (Ark.Opts.Error) invalid value for option :pool/:size, expected a positive integer, got: 0
+
+  A callback can return any term as an error reason, for instance the error of
+  a parsing function. The error holds the reason as it is, and the message
+  formats it: an exception with `Exception.message/1`, a term implementing
+  `String.Chars` with `to_string/1`, and any other term with `inspect/1`.
+
+      iex> {:error, error} =
+      ...>   Ark.Opts.validate([since: "yesterday"], %{}, fn
+      ...>     :since, value -> Date.from_iso8601(value)
+      ...>     _, _ -> :unknown
+      ...>   end)
+      iex> error.reason
+      :invalid_format
+      iex> Exception.message(error)
+      "invalid value for option :since: invalid_format"
 
   ### Value helpers
 
   The value helpers, such as `string/1` or `pos_integer/1`, take a value and
-  return `{:ok, value}` or `{:error, expected}`, so a callback clause can return
-  their result directly. `member_of/2` accepts the values of a given list.
+  return `{:ok, value}` or `{:error, expected}` with a string, so a callback
+  clause can return their result directly. `member_of/2` accepts the values of
+  a given list.
 
   The combinators `any_of/2`, `all_of/2`, `nullable/2` and `list_of/2` check a
   value with other validators. Their arity 1 variants, like `member_of/1`, return a
@@ -111,6 +152,8 @@ defmodule Ark.Opts do
       %{tags: ["a", "b"]}
   """
 
+  alias Ark.Opts.Error
+
   @doc false
   def __ark__(:doc) do
     """
@@ -131,24 +174,26 @@ defmodule Ark.Opts do
   end
 
   @type expected :: String.t()
-  @type result :: {:ok, term} | {:error, expected}
+  @type reason :: expected | term
+  @type result :: {:ok, term} | {:error, reason}
   @type validator :: (atom, term -> result | :unknown)
-  @type subject :: String.t() | nil
+  @type subject :: term
+  @type validate_opts :: [subject: subject, required: [atom]]
 
   @doc """
   Same as `validate/4`, but returns the options map directly and raises the
-  `ArgumentError` on invalid options.
+  `Ark.Opts.Error` on invalid options.
 
-      iex> Ark.Opts.validate!([level: :debug], %{level: :info}, "MyApp.log/2", fn
+      iex> Ark.Opts.validate!([level: :debug], %{level: :info}, [subject: "MyApp.log/2"], fn
       ...>   :level, value -> Ark.Opts.member_of(value, [:debug, :info, :error])
       ...>   _, _ -> :unknown
       ...> end)
       %{level: :debug}
   """
   @spec validate!(term, map, validator) :: map
-  @spec validate!(term, map, subject, validator) :: map
-  def validate!(opts, defaults, subject \\ nil, fun) do
-    case validate(opts, defaults, subject, fun) do
+  @spec validate!(term, map, validate_opts, validator) :: map
+  def validate!(opts, defaults, validate_opts \\ [], fun) do
+    case validate(opts, defaults, validate_opts, fun) do
       {:ok, map} -> map
       {:error, e} -> raise e
     end
@@ -158,7 +203,7 @@ defmodule Ark.Opts do
   Validates `opts` with the `fun` callback and merges the validated options
   over `defaults`.
 
-      iex> Ark.Opts.validate([level: :debug], %{level: :info}, "MyApp.log/2", fn
+      iex> Ark.Opts.validate([level: :debug], %{level: :info}, [subject: "MyApp.log/2"], fn
       ...>   :level, value -> Ark.Opts.member_of(value, [:debug, :info, :error])
       ...>   _, _ -> :unknown
       ...> end)
@@ -168,39 +213,54 @@ defmodule Ark.Opts do
 
   * `opts` - The options to validate, a keyword list or a map with atom keys.
   * `defaults` - A map of values for the options that are not given.
-  * `subject` - An optional string naming the caller, such as
-    `"MyApp.log/2"`, included in error messages.
+  * `validate_opts` - A keyword list with the following options.
+    * `:subject` - A term naming the caller in error messages, such as
+      `"MyApp.log/2"`. Strings are printed as they are, and other terms with
+      `inspect/1`.
+    * `:required` - A list of keys that the options must contain. Defaults to
+      `[]`.
   * `fun` - The validator callback, a function of arity 2 called with the key
     and the value of each option. See the "Validator callback" section of the
     module documentation for its return values.
 
   Returns `{:ok, map}` with the defaults and the values returned by the
-  callback. Returns `{:error, %ArgumentError{}}` when `opts` is a struct or is
-  not a keyword list or a map with atom keys, when an option is given twice, or
-  when the callback returns `{:error, expected}` or `:unknown`.
+  callback. Returns `{:error, %Ark.Opts.Error{}}` when `opts` is a struct or is
+  not a keyword list or a map with atom keys, when an option is given twice,
+  when a required option is missing, or when the callback returns
+  `{:error, reason}` or `:unknown`.
 
-      iex> Ark.Opts.validate([color: :red], %{}, "MyApp.log/2", fn _, _ -> :unknown end)
-      {:error, %ArgumentError{message: "unknown option :color in MyApp.log/2"}}
+      iex> Ark.Opts.validate([], %{}, [subject: "MyApp.log/2", required: [:level]], fn
+      ...>   :level, value -> Ark.Opts.atom(value)
+      ...>   _, _ -> :unknown
+      ...> end)
+      {:error, %Ark.Opts.Error{kind: :missing_option, path: [:level], subject: "MyApp.log/2"}}
 
   Raises an `ArgumentError` when the callback returns another value.
   """
-  @spec validate(term, map, validator) :: {:ok, map} | {:error, Exception.t()}
-  @spec validate(term, map, subject, validator) ::
-          {:ok, map} | {:error, Exception.t()}
-  def validate(opts, defaults, subject \\ nil, fun)
-      when is_map(defaults) and (is_binary(subject) or is_nil(subject)) and
-             is_function(fun, 2) do
-    case reduce(to_list(opts), %{}, subject, fun) do
+  @spec validate(term, map, validator) :: {:ok, map} | {:error, Error.t()}
+  @spec validate(term, map, validate_opts, validator) :: {:ok, map} | {:error, Error.t()}
+  def validate(opts, defaults, validate_opts \\ [], fun)
+      when is_map(defaults) and is_function(fun, 2) do
+    %{subject: subject, required: required} =
+      validate_opts
+      |> Keyword.validate!(subject: nil, required: [])
+      |> Map.new()
+
+    case validate_given(opts, required, subject, fun) do
       {:ok, given} -> {:ok, Map.merge(defaults, given)}
-      {:error, message} -> {:error, ArgumentError.exception(message)}
+      {:error, %Error{} = e} when subject == nil -> {:error, e}
+      {:error, %Error{} = e} -> {:error, %{e | subject: subject}}
+    end
+  end
+
+  defp validate_given(opts, required, subject, fun) do
+    with {:ok, given} <- reduce(to_list(opts), %{}, subject, fun),
+         :ok <- check_required(required, given) do
+      {:ok, given}
     end
   catch
     :throw, {__MODULE__, :invalid_shape} ->
-      {:error,
-       ArgumentError.exception(
-         "expected options#{in_subject(subject)} to be a keyword list or a map, " <>
-           "got: #{inspect(opts)}"
-       )}
+      {:error, %Error{kind: :invalid_options, path: [], value: opts}}
   end
 
   defp to_list(opts) when is_list(opts) do
@@ -219,8 +279,8 @@ defmodule Ark.Opts do
     {:ok, acc}
   end
 
-  defp reduce([{key, _} | _], acc, subject, _fun) when is_map_key(acc, key) do
-    {:error, "duplicate option #{inspect(key)}#{in_subject(subject)}"}
+  defp reduce([{key, _} | _], acc, _subject, _fun) when is_map_key(acc, key) do
+    {:error, %Error{kind: :duplicate_option, path: [key]}}
   end
 
   defp reduce([{key, value} | rest], acc, subject, fun) when is_atom(key) do
@@ -228,19 +288,16 @@ defmodule Ark.Opts do
       {:ok, value} ->
         reduce(rest, Map.put(acc, key, value), subject, fun)
 
-      {:error, expected} when is_binary(expected) ->
-        {:error,
-         "invalid value for option #{inspect(key)}#{in_subject(subject)}, " <>
-           "expected #{expected}, got: #{inspect(value)}"}
+      {:error, reason} ->
+        {:error, located_error(reason, key, value)}
 
       :unknown ->
-        {:error, "unknown option #{inspect(key)}#{in_subject(subject)}"}
+        {:error, %Error{kind: :unknown_option, path: [key]}}
 
       other ->
         raise ArgumentError,
-              "invalid validator return value for option #{inspect(key)}#{in_subject(subject)}, " <>
-                "expected {:ok, value}, {:error, expected} with a string, or :unknown, " <>
-                "got: #{inspect(other)}"
+              "invalid validator return value for option #{inspect(key)}#{Error.in_subject(subject)}, " <>
+                "expected {:ok, value}, {:error, reason} or :unknown, got: #{inspect(other)}"
     end
   end
 
@@ -248,12 +305,19 @@ defmodule Ark.Opts do
     throw({__MODULE__, :invalid_shape})
   end
 
-  defp in_subject(nil) do
-    ""
+  defp located_error(%Error{} = e, key, _value) do
+    Error.prepend(e, key)
   end
 
-  defp in_subject(subject) do
-    " in " <> subject
+  defp located_error(reason, key, value) do
+    %Error{kind: :invalid_value, path: [key], value: value, reason: reason}
+  end
+
+  defp check_required(required, given) do
+    case Enum.reject(required, &Map.has_key?(given, &1)) do
+      [] -> :ok
+      [key | _] -> {:error, %Error{kind: :missing_option, path: [key]}}
+    end
   end
 
   @doc """
@@ -491,6 +555,9 @@ defmodule Ark.Opts do
   @doc """
   Validates that `value` is `nil` or a value accepted by `validator`.
 
+  When `validator` returns an expected description, the error appends
+  `" or nil"` to it. Other error reasons are returned as they are.
+
       iex> Ark.Opts.nullable(nil, &Ark.Opts.string/1)
       {:ok, nil}
       iex> Ark.Opts.nullable("hello", &Ark.Opts.string/1)
@@ -506,7 +573,8 @@ defmodule Ark.Opts do
   def nullable(value, validator) do
     case validator.(value) do
       {:ok, _} = ok -> ok
-      {:error, expected} -> {:error, expected <> " or nil"}
+      {:error, expected} when is_binary(expected) -> {:error, expected <> " or nil"}
+      {:error, _} = error -> error
     end
   end
 
@@ -529,7 +597,10 @@ defmodule Ark.Opts do
   of the first one that accepts it.
 
   The `validators` argument is a non-empty list. When no validator accepts the
-  value, the error joins all expected descriptions.
+  value and all of them return an expected description, the error joins those
+  descriptions. Otherwise the error reason is `{:any_of, reasons}`, with the
+  reasons in the order of `validators`, and `Ark.Opts.Error` formats it by
+  joining the formatted reasons with "or".
 
       iex> Ark.Opts.any_of(10, [&Ark.Opts.boolean/1, &Ark.Opts.pos_integer/1])
       {:ok, 10}
@@ -541,15 +612,21 @@ defmodule Ark.Opts do
     any_of(value, validators, [])
   end
 
-  defp any_of(value, [validator | validators], expected_acc) do
+  defp any_of(value, [validator | validators], reasons_acc) do
     case validator.(value) do
       {:ok, _} = ok -> ok
-      {:error, expected} -> any_of(value, validators, [expected | expected_acc])
+      {:error, reason} -> any_of(value, validators, [reason | reasons_acc])
     end
   end
 
-  defp any_of(_value, [], expected_acc) do
-    {:error, expected_acc |> :lists.reverse() |> Enum.join(" or ")}
+  defp any_of(_value, [], reasons_acc) do
+    reasons = :lists.reverse(reasons_acc)
+
+    if Enum.all?(reasons, &is_binary/1) do
+      {:error, Enum.join(reasons, " or ")}
+    else
+      {:error, {:any_of, reasons}}
+    end
   end
 
   @doc """
@@ -622,6 +699,11 @@ defmodule Ark.Opts do
 
   Returns a list of the values returned by `validator`, in the same order.
 
+  When `validator` returns an expected description, the error describes the
+  expected list. Other error reasons are returned as an `Ark.Opts.Error` whose
+  path starts with the index of the invalid element, so errors of nested
+  validations name the element they come from.
+
       iex> Ark.Opts.list_of([:a, :b], &Ark.Opts.atom/1)
       {:ok, [:a, :b]}
       iex> Ark.Opts.list_of([:a, "b"], &Ark.Opts.atom/1)
@@ -631,25 +713,31 @@ defmodule Ark.Opts do
   """
   @spec list_of(term, (term -> result)) :: result
   def list_of(value, validator) when is_list(value) do
-    list_of(value, validator, [])
+    list_of(value, validator, 0, [])
   end
 
   def list_of(_value, _validator) do
     {:error, "a list"}
   end
 
-  defp list_of([item | rest], validator, acc) do
+  defp list_of([item | rest], validator, index, acc) do
     case validator.(item) do
-      {:ok, item} -> list_of(rest, validator, [item | acc])
-      {:error, expected} -> {:error, "a list where each element is #{expected}"}
+      {:ok, item} ->
+        list_of(rest, validator, index + 1, [item | acc])
+
+      {:error, expected} when is_binary(expected) ->
+        {:error, "a list where each element is #{expected}"}
+
+      {:error, reason} ->
+        {:error, located_error(reason, index, item)}
     end
   end
 
-  defp list_of([], _validator, acc) do
+  defp list_of([], _validator, _index, acc) do
     {:ok, :lists.reverse(acc)}
   end
 
-  defp list_of(_improper, _validator, _acc) do
+  defp list_of(_improper, _validator, _index, _acc) do
     {:error, "a proper list"}
   end
 end
