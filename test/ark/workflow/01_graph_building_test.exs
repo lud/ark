@@ -825,7 +825,7 @@ defmodule Ark.Workflow.GraphBuildingTest do
       assert %{key: {:default, :a, %{}}, alternative: :default, error: %{kind: :error}} =
                cause
 
-      assert cause.error.error =~ "UndefinedFunctionError"
+      assert cause.error.message =~ "UndefinedFunctionError"
     end
   end
 end

@@ -248,7 +248,7 @@ defmodule Ark.Workflow.DumpLoadTest do
     end)
   end
 
-  test "a failure record queried after a round trip equals the one before, including its time and kind" do
+  test "a failure record queried after a round trip equals the one before, including its time, kind and message, apart from the reason of its cleaned error" do
     graph =
       Workflow.new()
       |> Workflow.add_rule(:a, %{
@@ -266,14 +266,14 @@ defmodule Ark.Workflow.DumpLoadTest do
     {:error, %ComputationError{}, wf} = Workflow.run(graph, [:a])
     loaded = roundtrip(wf, graph)
 
-    assert Workflow.attempts(wf, :a) == Workflow.attempts(loaded, :a)
+    assert without_reasons(Workflow.attempts(wf, :a)) == Workflow.attempts(loaded, :a)
     assert Workflow.fetch(wf, :a) == Workflow.fetch(loaded, :a)
 
-    assert Workflow.attempts(wf, {:b, %{id: 1}}) ==
+    assert without_reasons(Workflow.attempts(wf, {:b, %{id: 1}})) ==
              Workflow.attempts(loaded, {:b, %{id: 1}})
   end
 
-  test "the computation error for a target that failed before a dump and a load is the same as the one returned by the run that failed it" do
+  test "the computation error for a target that failed before a dump and a load is the same as the one returned by the run that failed it, apart from the reason of its causes" do
     graph =
       Workflow.new()
       |> Workflow.add_rule(:a, %{
@@ -287,8 +287,71 @@ defmodule Ark.Workflow.DumpLoadTest do
     {:error, %ComputationError{} = e1, wf} = Workflow.run(graph, [:a])
     {:error, %ComputationError{} = e2, _} = Workflow.run(roundtrip(wf, graph), [:a])
 
-    assert e1 == e2
+    assert without_reasons(e1) == e2
     assert Exception.message(e1) == Exception.message(e2)
+  end
+
+  test "the reason of a cleaned error is nil after a dump and a load, while its message, kind and time are unchanged" do
+    graph =
+      Workflow.add_rule(Workflow.new(), :a, %{
+        alts: [
+          user_term: %{deps: [], body: error_body(:x)},
+          bad_return: %{deps: [], body: fn _, _, _ -> :not_ok end},
+          error: %{deps: [], body: fn _, _, _ -> raise "boom" end},
+          throw: %{deps: [], body: fn _, _, _ -> throw(:thrown) end},
+          exit: %{deps: [], body: fn _, _, _ -> exit(:exited) end}
+        ]
+      })
+
+    {:error, %ComputationError{}, wf} = Workflow.run(graph, [:a])
+    loaded = roundtrip(wf, graph)
+
+    assert {:ok, before} = Workflow.attempts(wf, :a)
+    assert {:ok, after_load} = Workflow.attempts(loaded, :a)
+    assert 5 == map_size(before)
+
+    for {alt, {:computation_error, cleaned}} <- before do
+      assert cleaned.reason != nil
+
+      assert {:computation_error, %{reason: nil} = loaded_cleaned} =
+               Map.fetch!(after_load, alt)
+
+      assert Map.take(cleaned, [:at, :kind, :message]) ==
+               Map.take(loaded_cleaned, [:at, :kind, :message])
+    end
+
+    assert {:error, %ComputationError{causes: causes}, _} = Workflow.run(loaded, [:a])
+    assert [nil, nil, nil, nil, nil] == Enum.map(causes, & &1.error.reason)
+  end
+
+  test "a cleaned error whose reason holds a pid or a function does not make dump fail" do
+    fun = fn -> :x end
+
+    graph =
+      Workflow.add_rule(Workflow.new(), :a, %{
+        alts: [
+          pid: %{deps: [], body: error_body({:down, self()})},
+          fun: %{deps: [], body: fn _, _, _ -> throw(fun) end}
+        ]
+      })
+
+    {:error, %ComputationError{}, wf} = Workflow.run(graph, [:a])
+
+    assert {:ok,
+            %{
+              pid: {:computation_error, %{reason: {:down, _}}},
+              fun: {:computation_error, %{reason: ^fun}}
+            }} =
+             Workflow.attempts(wf, :a)
+
+    assert {:ok, _} = Workflow.dump(wf)
+    loaded = roundtrip(wf, graph)
+
+    assert {:ok,
+            %{
+              pid: {:computation_error, %{kind: :user_term, reason: nil}},
+              fun: {:computation_error, %{kind: :throw, reason: nil}}
+            }} = Workflow.attempts(loaded, :a)
   end
 
   test "a {:dep_failed, key} record pointing to an orphaned key survives a load and a dump" do
@@ -462,7 +525,7 @@ defmodule Ark.Workflow.DumpLoadTest do
 
       verify(pid)
       assert Workflow.fetch(wf, :a) == Workflow.fetch(loaded, :a)
-      assert Workflow.attempts(wf, :a) == Workflow.attempts(loaded, :a)
+      assert without_reasons(Workflow.attempts(wf, :a)) == Workflow.attempts(loaded, :a)
     end
   end
 
