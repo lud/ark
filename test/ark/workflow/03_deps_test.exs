@@ -153,7 +153,7 @@ defmodule Ark.Workflow.DepsTest do
 
       wf = run!(wf, [{NsA, :r, %{}}])
 
-      assert %{{:a, %{id: 1}} => %{id: 1}, {:a, %{id: 2}} => %{id: 2}} ==
+      assert %{{NsA, :a, %{id: 1}} => %{id: 1}, {:a, %{id: 2}} => %{id: 2}} ==
                fetch!(wf, {NsA, :r, %{}})
     end
 
