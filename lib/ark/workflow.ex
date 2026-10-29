@@ -236,7 +236,7 @@ defmodule Ark.Workflow do
       end
 
       entries = Enum.map(deps, &parse_dep(&1, ns, identity, name))
-      exposed = check_shadowing!(entries, ns, identity, name)
+      exposed = check_shadowing!(entries, identity, name)
       %{deps: entries, body: body, exposed: exposed}
     else
       :error ->
@@ -265,7 +265,7 @@ defmodule Ark.Workflow do
   end
 
   defp parse_dep(term, ns, identity, alt) do
-    {:key, parse_dep_key(term, ns, identity, alt)}
+    {:key, term, parse_dep_key(term, ns, identity, alt)}
   end
 
   defp parse_dep_key(term, ns, identity, alt) do
@@ -286,13 +286,13 @@ defmodule Ark.Workflow do
     )
   end
 
-  defp check_shadowing!(entries, ns, identity, alt) do
+  defp check_shadowing!(entries, identity, alt) do
     Enum.reduce(entries, %{}, fn
       {:fun, _}, acc ->
         acc
 
-      {:key, key}, acc ->
-        expose!(acc, expose_key(key, ns), key, identity, alt)
+      {:key, term, key}, acc ->
+        expose!(acc, term, key, identity, alt)
 
       {:alias, pairs}, acc ->
         Enum.reduce(pairs, acc, fn {a, key}, acc ->
@@ -319,18 +319,6 @@ defmodule Ark.Workflow do
       _ ->
         Map.put(acc, exposed, key)
     end
-  end
-
-  defp expose_key({ns, name, params}, ns) when params == %{} do
-    name
-  end
-
-  defp expose_key({ns, name, params}, ns) do
-    {name, params}
-  end
-
-  defp expose_key(key, _ns) do
-    key
   end
 
   defp ordered_pairs(map) do
@@ -521,7 +509,7 @@ defmodule Ark.Workflow do
 
   defp static_keys(deps) do
     Enum.flat_map(deps, fn
-      {:key, key} -> [key]
+      {:key, _, key} -> [key]
       {:alias, pairs} -> Enum.map(pairs, &elem(&1, 1))
       {:fun, _} -> []
     end)
@@ -697,8 +685,8 @@ defmodule Ark.Workflow do
     advance(%{frame | cur: nil}, %{st | attempts: attempts})
   end
 
-  defp expand({:key, key}, cur, frame, _st) do
-    {:ok, [{expose_key(key, frame.ns), key}], cur.exposed}
+  defp expand({:key, term, key}, cur, _frame, _st) do
+    {:ok, [{term, key}], cur.exposed}
   end
 
   defp expand({:alias, pairs}, cur, _frame, _st) do
@@ -756,8 +744,7 @@ defmodule Ark.Workflow do
 
   defp parse_dynamic(result, ns, ctx) when is_list(result) do
     Enum.map(result, fn term ->
-      key = dynamic_key(term, ns, ctx)
-      {expose_key(key, ns), key}
+      {term, dynamic_key(term, ns, ctx)}
     end)
   end
 
