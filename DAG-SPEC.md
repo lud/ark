@@ -169,16 +169,16 @@ keys compare. Consequences:
 
 Code addresses are atoms: namespaces (`__MODULE__`), rule names
 (`deps: [:account]`) and alternative names (§4). The graph maps each
-`{ns, name}` to its rule. A string where code expects an address resolves
-to nothing: registering a rule or an alternative under a string, or
-declaring a static dependency with a string identity, is rejected by
-`add_rule`; a dependency function returning a key with a string identity
-is a graph error (§5).
+`{ns, name}` to its rule. A string where code expects an address is not
+an address, and is never looked up: registering a rule or an alternative
+under a string, or declaring a static dependency with a string identity,
+is rejected by `add_rule`; a target, or a key returned by a dependency
+function, with a string identity is an invalid key (§5, §9).
 
 `nil`, `true` and `false` are atoms but never addresses: they are almost
 always a mistake. `add_rule` rejects them as a namespace, a rule name, an
 alternative name, and in the identity of a static dependency. A
-dependency function returning one of them is a graph error (§5).
+dependency function returning one of them returns an invalid key (§5).
 
 Dumps store identities and alternative names by their string form (§8):
 `:account` is `"account"`, `MyApp.Billing` is `"Elixir.MyApp.Billing"`.
@@ -305,8 +305,8 @@ forms, it is exposed under each of them: `[:a, {:a, %{}}]` exposes the
 value of `:a` under `:a` and `{:a, %{}}`. Two **different** keys of one
 alternative exposed under the same `deps` key are an error, including an
 alias that shadows the written form of another dependency.
-The error carries a kind or tag so its message can call out the
-shadowing. It is rejected by `add_rule`, or is a graph error when a
+The reason of the graph error is `{:shadowing, exposure, exposure}`
+(§9), so its message can call out the shadowing. It is rejected by `add_rule`, or is a graph error when a
 dependency function returns it (§5). Each alternative has its own `deps`
 map: two alternatives of one rule may use the same alias for different
 keys.
@@ -447,20 +447,23 @@ graph structure.
   recorded for the key whose dependency function returned it: once a
   deploy fixes the code, the next run continues from there. The error
   carries what is needed to debug the code: the returned value, and the
-  key and alternative whose dependency function returned it. Invalid
-  returns are:
-  - `nil`, `true` and `false`: atoms, but reported as invalid returns
-    rather than as keys with no rule;
-  - a string, a number, a function, a nested list, a list holding an
-    alias map, or any other term that is not a key, a list of keys or an
-    alias map;
-  - a key with no registered rule, even when the state holds records for
-    it (§3), including a key with a string `ns` or `name`. `{:ok, keys}`
-    reads as rule `:ok` with list params, and its message hints that
-    dependency functions return keys directly;
-  - a key with invalid params (§3);
-  - a key exposed under the same `deps` key as a different key of the
-    alternative (§4).
+  key and alternative whose dependency function returned it. Its reason
+  is `{:bad_return, :deps, fun, retval, key_reason}` (§9), where
+  `key_reason` tells what is wrong with the returned value:
+  - `{:invalid_key, given}`, for a term that is not a key: `nil`, `true`
+    and `false` (atoms, but reported as invalid keys rather than as keys
+    with no rule), a key with a string `ns` or `name`, a string, a
+    number, a function, a nested list, a list holding an alias map, or
+    any other term that is not a key, a list of keys or an alias map;
+  - `{:invalid_params, given}`, for a key with invalid params (§3);
+  - `{:unknown_rule, key}`, for a key with no registered rule, even when
+    the state holds records for it (§3);
+  - `{:shadowing, exposure, exposure}`, for a key exposed under the same
+    `deps` key as a different key of the alternative (§4).
+
+  `{:ok, keys}` reads as a key of rule `:ok`: invalid params for a list
+  or an atom, an unknown rule for a map. Whatever its key reason, its
+  message hints that dependency functions return keys directly.
 - A returned key naming an existing rule with params that match no
   data (e.g. `{:account, %{id: id}}` for a deleted account) is a
   normal dependency: the key is computed, fails, and the alternative fails
@@ -469,7 +472,8 @@ graph structure.
 Static dependencies with a string identity or invalid params are
 rejected by `add_rule`. Rules may be registered in any order, so a
 static dependency naming a rule that is not registered is a graph error
-returned by `run` before any user code is called. Keys returned by
+returned by `run` before any user code is called, with reason
+`{:unknown_rule, key}`. Keys returned by
 dependency functions **cannot be checked before the function runs**.
 
 ### Cycles
@@ -479,8 +483,8 @@ demands `:b`, and a dependency function of `:b` returns `:a`. A cycle is
 a demand for a key that is **in progress**, i.e. already on the demand
 stack (§2), as an ancestor of the demanding computation. Like a missing
 rule, a cycle means the graph is not well thought out: it is a graph
-error, and `run` stops as above. The error carries the demanded key and
-the demand stack that leads back to it.
+error, and `run` stops as above. Its reason is `{:cycle, key, stack}`
+(§9): the demanded key, and the demand stack that leads back to it.
 
 ### Example
 
@@ -892,9 +896,8 @@ structs, so `Exception.message/1` formats them for logs:
   `reason` of a cause is the original term for a failure recorded in the
   current workflow value, and `nil` for a failure loaded from a dump.
 - **Graph error** (`Ark.Workflow.GraphError`): the code is wrong,
-  whatever the data. It carries a `kind` (invalid rule, invalid target,
-  invalid dependency, shadowing, cycle...) and what is needed to debug
-  the code. Graph errors are sorted by when they can be detected:
+  whatever the data. It carries what is needed to debug the code, as
+  described below. Graph errors are sorted by when they can be detected:
   1. `add_rule` raises on anything it can check from the rule alone:
      identity, rule and alternative map shapes, names, arity of anonymous functions and captures,
      malformed dependency entries, static keys with a string identity or
@@ -909,6 +912,58 @@ structs, so `Exception.message/1` formats them for logs:
      nothing for the key whose dependency function is at fault.
 
   `run` never raises.
+
+  A graph error holds:
+  - `rule`: the `{ns, name}` of the rule at fault, or `nil` when no rule
+    is involved: an invalid identity, a target, a key given to `fetch`,
+    `attempts` or `clear_failure`, or `add_ns`;
+  - `key`: the key being computed, with its params, for an error found
+    during the run (3. above), `nil` otherwise;
+  - `alternative`: the name of the alternative at fault, when the error
+    is inside one;
+  - `reason`: what is wrong, as a tagged tuple holding the terms involved
+    as the code gave them, or an `Ark.Opts.Error` for the shape of a
+    rule. Its message is derived from the reason and the fields above.
+
+  Key reasons are shared by static dependencies, keys returned by
+  dependency functions, targets, and the keys given to `fetch`,
+  `attempts` and `clear_failure`:
+
+  | Reason | For |
+  | --- | --- |
+  | `{:invalid_key, given}` | A term that is not a key: a string, a number, a nested list, `nil`, `true`, `false`, a string `ns` or `name` |
+  | `{:invalid_params, given}` | A key whose params are not a map, or hold a pid, port, reference or function. A forgotten params, `{ns, name}`, is one: its message hints `{ns, name, %{}}` |
+  | `{:unknown_rule, key}` | A key whose `{ns, name}` has no rule. The full key shows how the namespace was resolved |
+  | `{:shadowing, exposure, exposure}` | Two different keys of one alternative exposed under the same `deps` key (§4) |
+
+  An exposure is `{exposed_as, key, :alias | :key}`: the `deps` key, the
+  full key exposed under it, and whether `exposed_as` is an alias or the
+  written form of the key. The first exposure of a shadowing comes before
+  the second in the alternative.
+
+  Building the graph, raised by `add_rule` and `add_ns`:
+
+  | Reason | For |
+  | --- | --- |
+  | `{:invalid_identity, given}` | An identity that is not `name` or `{ns, name}` with addresses (§3) |
+  | `{:duplicate_rule, identity}` | An identity already registered |
+  | `{:invalid_rule, %Ark.Opts.Error{}}` | The shape of the rule or alternative maps: missing or unknown keys, `alts` that is not a non-empty keyword list, an invalid or duplicate alternative name, the arity of a body, a dependency function, `:dump` or `:load`. `alternative` is taken from the error path |
+  | `{:invalid_namespace, given}` | `add_ns` with a namespace that is not an address |
+  | `{:bad_return, :add_ns, fun, retval, :not_a_graph}` | The `add_ns` callback did not return a graph |
+
+  `add_rule` raises the key reasons for invalid static dependencies, with
+  `rule` and `alternative` set: a dependency entry that is neither a
+  key, an alias map nor a dependency function is `{:invalid_key, given}`.
+
+  Before evaluation, `run` returns `{:unknown_rule, key}` for a static
+  dependency naming a rule that is not registered, with `rule` and
+  `alternative` naming the dependent rule, and the key reasons of an
+  invalid target, with `rule` set to `nil`. During evaluation:
+
+  | Reason | For |
+  | --- | --- |
+  | `{:bad_return, :deps, fun, retval, key_reason}` | A dependency function, or a `:deps` middleware wrapping it, returned an invalid dependency (§5). `fun` is the dependency function as written in the `deps` list, `retval` the whole returned value, `key_reason` one of the key reasons |
+  | `{:cycle, key, stack}` | `key` demanded while in progress (§5). `stack` lists the keys being computed, in demand order, from the target down to the demanding key, the `key` of the error |
 - **Codec error** (`Ark.Workflow.CodecError`): a dump or a load failed: a
   value that cannot be encoded, a rule's `:dump` or `:load` that raises,
   a malformed dump, a value that cannot be decoded. Returned by `dump`,
@@ -1188,6 +1243,11 @@ run after a given operation, which the API does not expose: several
 implementations may define operations differently. They are skipped until
 an implementation is chosen.
 
+A test of a graph error matches its reason (§9): at least its tag and the
+term at fault, and `rule`, `key` and `alternative` when the error sets
+them. A test of a message checks only what the formatter adds: hints,
+and how keys are printed.
+
 The suite may be split into files by topic, numbered in a useful reading
 order (`01_graph_building_test.exs`, `02_keys_test.exs`, ...). Test
 helpers in `test/support` are left to the implementor.
@@ -1195,10 +1255,10 @@ helpers in `test/support` are left to the implementor.
 ### Graph building (§3, §4, §5)
 
 - Registering a rule...
-  - ...twice under the same `{ns, name}` is an error
+  - ...twice under the same `{ns, name}` raises `{:duplicate_rule, identity}`
   - ...with an empty alternative list is an error
   - ...with two alternatives of the same name is an error
-  - ...under a string `ns` or `name` is rejected
+  - ...under a string `ns` or `name` raises `{:invalid_identity, given}`
   - ...with a string alternative name is rejected
   - ...with an `ns`, `name` or alternative name that is neither an atom
     nor a string (an integer, a tuple) is rejected
@@ -1226,14 +1286,15 @@ helpers in `test/support` are left to the implementor.
 - A static dependency...
   - ...naming a rule that is not registered makes `run` return a graph
     error before calling any user code, also when no target demands the
-    rule holding it
+    rule holding it, with reason `{:unknown_rule, key}`, and the rule and
+    alternative holding the dependency
   - ...with a string `ns` or `name` is rejected when the rule is registered
   - ...with `nil`, `true` or `false` as `ns` or `name` is rejected when
     the rule is registered
   - ...with params containing a pid, port, reference or function, at any
     depth, is rejected when the rule is registered
   - ...written `{ns, name}` (forgotten params) is rejected as invalid
-    params
+    params, with a message hinting `{ns, name, %{}}`
   - ...with params that are not a map (a list, an integer) is rejected as
     invalid params
   - ...naming a rule registered later in the graph is accepted
@@ -1244,9 +1305,9 @@ helpers in `test/support` are left to the implementor.
   alias map
 - A static alias map whose value is a dependency function is rejected
 - Two different static keys of one alternative exposed under the same
-  `deps` key are rejected when the rule is registered, with an error kind
-  that calls out the shadowing when an alias shadows the written form of
-  another dependency
+  `deps` key are rejected when the rule is registered, with reason
+  `{:shadowing, exposure, exposure}`, also when an alias shadows the
+  written form of another dependency
 - The same static key listed twice in one alternative is accepted and
   demanded once...
   - ...in two forms (`:a` and `{__MODULE__, :a, %{}}`, or `:a` and
@@ -1260,7 +1321,10 @@ helpers in `test/support` are left to the implementor.
   - ...resolves the dependencies written without namespace in those rules
     to its namespace
   - ...restores the current namespace when the callback returns
-  - ...raises when the callback does not return a graph
+  - ...raises `{:bad_return, :add_ns, fun, retval, :not_a_graph}` when the
+    callback does not return a graph
+  - ...raises `{:invalid_namespace, given}` for a namespace that is not an
+    address
 - Nested `add_ns` calls...
   - ...register the rules of the inner callback in the inner namespace
   - ...restore the enclosing namespace, not `:default`, when the inner
@@ -1318,15 +1382,17 @@ helpers in `test/support` are left to the implementor.
   - ...a target written `name` does not name a rule of another namespace
 - An error message prints keys of `:default` without their namespace
 - An error message prints keys of other namespaces with their namespace
-- `run` returns a graph error, without calling user code...
-  - ...for a target with no registered rule
-  - ...for a target with a string `ns` or `name`
+- `run` returns a graph error with `rule` set to `nil`, without calling
+  user code...
+  - ...for a target with no registered rule: `{:unknown_rule, key}`
+  - ...for a target with a string `ns` or `name`: `{:invalid_key, given}`
   - ...for a target with params containing a pid, port, reference or
-    function
+    function: `{:invalid_params, given}`
   - ...for a target with no registered rule even when the loaded state
     holds records for that key
-  - ...for a malformed target: `nil`, `true`, an integer, params that are
-    not a map, `{ns, name}` without params, a four-element tuple
+  - ...for a malformed target: `{:invalid_key, given}` for `nil`, `true`,
+    an integer or a four-element tuple, `{:invalid_params, given}` for
+    params that are not a map or `{ns, name}` without params
 
 ### Dependency forms and the `deps` map (§4)
 
@@ -1474,26 +1540,26 @@ helpers in `test/support` are left to the implementor.
   - ...exits fails the alternative with kind `:exit`
 - A dependency function returning an invalid dependency makes `run` stop
   with a graph error...
-  - ...carrying the returned value, and the key and alternative whose
-    dependency function returned it
+  - ...with reason `{:bad_return, :deps, fun, retval, key_reason}`, and
+    the rule, key and alternative whose dependency function returned it
   - ...returned with the workflow and every fact recorded before
   - ...recording nothing for the key whose dependency function returned
     it
   - ...after which a run with fixed code continues without calling the
     user code of recorded keys again
-- Invalid dependencies, each a graph error:
-  - `nil`, `true` and `false`, reported as invalid returns, not as keys
-    with no rule
+- Invalid dependencies, each a graph error with its key reason:
+  - `nil`, `true` and `false`: `{:invalid_key, given}`, not an unknown
+    rule
   - a string, a number, a function, a nested list, a list holding an alias
-    map
+    map: `{:invalid_key, given}`
   - `{:ok, keys}`, with a message hinting that keys are returned directly
   - a key with no registered rule, even when the state holds records for
-    that key
-  - a key with a string `ns` or `name`
-  - a key with invalid params
+    that key: `{:unknown_rule, key}`
+  - a key with a string `ns` or `name`: `{:invalid_key, given}`
+  - a key with invalid params: `{:invalid_params, given}`
   - a key exposed under the same `deps` key as a different key of the
-    alternative, with an error kind that calls out the shadowing, when
-    the other key is...
+    alternative: `{:shadowing, exposure, exposure}`, when the other key
+    is...
     - ...to the left of the dependency function
     - ...a static dependency to its right
     - ...returned by another dependency function of the alternative,
@@ -1512,8 +1578,10 @@ helpers in `test/support` are left to the implementor.
 ### Cycles (§5)
 
 - A dependency function returning a key in progress makes `run` stop
-  with a graph error carrying the demanded key and the demand stack
-  leading back to it, recording nothing for the keys of the cycle
+  with a graph error with reason `{:cycle, key, stack}`: the demanded key,
+  and the keys being computed from the target down to the demanding key,
+  which `rule`, `key` and `alternative` name. Nothing is recorded for the
+  keys of the cycle
 - A static dependency chain that loops back to a key in progress makes
   `run` stop the same way
 - A key demanded twice from different branches (a diamond) is not a cycle:
@@ -1583,8 +1651,9 @@ helpers in `test/support` are left to the implementor.
   - ...`:error` for a key never demanded
   - ...`{:error, graph_error}` for a key with no registered rule, even
     when the state holds records for it
-  - ...`{:error, graph_error}` for an invalid key (a string identity,
-    params that are not a map)
+  - ...`{:error, graph_error}` for an invalid key: `{:invalid_key, given}`
+    for a string identity, `{:invalid_params, given}` for params that are
+    not a map
 - `fetch` accepts the key forms of `run` targets: `:foo` reads
   `{:default, :foo, %{}}`
 - `run` returns `{:error, error, workflow}` for the first failed target,
@@ -1765,7 +1834,8 @@ helpers in `test/support` are left to the implementor.
 - A middleware wrapping a body and returning an invalid value fails the
   alternative with kind `:bad_return`
 - A middleware wrapping a dependency function and returning an invalid
-  dependency makes `run` stop with a graph error
+  dependency makes `run` stop with a graph error, with the reason the
+  dependency function would have
 - A middleware that rescues a raise from user code and returns
   `{:ok, value}` records the value
 - A `:deps` middleware that does not invoke the call supplies the keys
