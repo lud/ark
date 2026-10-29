@@ -162,8 +162,10 @@ defmodule Ark.Workflow.KeysAndRunTest do
     test "a target written name does not name a rule of another namespace" do
       wf = Workflow.add_rule(Workflow.new(), {NsA, :a}, const_rule(1))
 
-      assert {:error, %GraphError{}, _} = Workflow.run(wf, [:a])
-      assert {:error, %GraphError{}, _} = Workflow.run(wf, [{:a, %{}}])
+      for target <- [:a, {:a, %{}}] do
+        assert {:error, %GraphError{reason: {:unknown_rule, {:default, :a, %{}}}}, _} =
+                 Workflow.run(wf, [target])
+      end
     end
   end
 
@@ -182,7 +184,9 @@ defmodule Ark.Workflow.KeysAndRunTest do
     assert message =~ "{:leaf, %{id: 1}}"
     refute message =~ "default"
 
-    assert {:error, %GraphError{} = e, _} = Workflow.run(wf, [:unknown])
+    assert {:error, %GraphError{reason: {:unknown_rule, _}} = e, _} =
+             Workflow.run(wf, [:unknown])
+
     message = Exception.message(e)
 
     assert message =~ ":unknown"
@@ -204,8 +208,13 @@ defmodule Ark.Workflow.KeysAndRunTest do
     end
 
     test "for a target with no registered rule", %{pid: pid, wf: wf} do
-      for target <- [:missing, {:missing, %{}}, {NsA, :missing, %{}}] do
-        assert {:error, %GraphError{}, wf2} = Workflow.run(wf, [:first, target])
+      for {target, key} <- [
+            {:missing, {:default, :missing, %{}}},
+            {{:missing, %{}}, {:default, :missing, %{}}},
+            {{NsA, :missing, %{}}, {NsA, :missing, %{}}}
+          ] do
+        assert {:error, e, wf2} = Workflow.run(wf, [:first, target])
+        assert %GraphError{rule: nil, key: nil, reason: {:unknown_rule, ^key}} = e
         assert :error == Workflow.fetch(wf2, :first)
       end
 
@@ -219,7 +228,8 @@ defmodule Ark.Workflow.KeysAndRunTest do
             {"default", :first, %{}},
             {:default, "first", %{}}
           ] do
-        assert {:error, %GraphError{}, _} = Workflow.run(wf, [:first, target])
+        assert {:error, %GraphError{rule: nil, reason: {:invalid_key, ^target}}, _} =
+                 Workflow.run(wf, [:first, target])
       end
 
       verify(pid)
@@ -229,27 +239,26 @@ defmodule Ark.Workflow.KeysAndRunTest do
       pid: pid,
       wf: wf
     } do
-      for bad <- invalid_target_params() do
-        assert {:error, %GraphError{}, _} =
-                 Workflow.run(wf, [:first, {:first, %{x: bad}}])
-
-        assert {:error, %GraphError{}, _} =
-                 Workflow.run(wf, [:first, {:first, %{x: [{bad}]}}])
+      for bad <- invalid_target_params(),
+          target <- [{:first, %{x: bad}}, {:first, %{x: [{bad}]}}] do
+        assert {:error, %GraphError{rule: nil, reason: {:invalid_params, ^target}}, _} =
+                 Workflow.run(wf, [:first, target])
       end
 
       verify(pid)
     end
 
     test "for a malformed target", %{pid: pid, wf: wf} do
-      for target <- [
-            nil,
-            true,
-            1,
-            {:first, [id: 1]},
-            {:default, :first},
-            {:a, :b, :c, :d}
+      for {target, tag} <- [
+            {nil, :invalid_key},
+            {true, :invalid_key},
+            {1, :invalid_key},
+            {{:a, :b, :c, :d}, :invalid_key},
+            {{:first, [id: 1]}, :invalid_params},
+            {{:default, :first}, :invalid_params}
           ] do
-        assert {:error, %GraphError{}, _} = Workflow.run(wf, [:first, target])
+        assert {:error, %GraphError{rule: nil, reason: {^tag, ^target}}, _} =
+                 Workflow.run(wf, [:first, target])
       end
 
       verify(pid)
@@ -340,11 +349,20 @@ defmodule Ark.Workflow.KeysAndRunTest do
         |> Workflow.add_rule(:bad_dep, rule([fn _, _, _ -> "not a key" end], ok_body(1)))
         |> Workflow.add_rule(:unknown_dep, rule([fn _, _, _ -> :nope end], ok_body(1)))
 
-      assert {:error, %GraphError{}, %Workflow{}} = Workflow.run(wf, [:missing])
-      assert {:error, %GraphError{}, %Workflow{}} = Workflow.run(wf, ["string"])
-      assert {:error, %GraphError{}, wf2} = Workflow.run(wf, [:ok, :bad_dep])
+      assert {:error, %GraphError{reason: {:unknown_rule, _}}, %Workflow{}} =
+               Workflow.run(wf, [:missing])
+
+      assert {:error, %GraphError{reason: {:invalid_key, "string"}}, %Workflow{}} =
+               Workflow.run(wf, ["string"])
+
+      assert {:error, e, wf2} = Workflow.run(wf, [:ok, :bad_dep])
+      assert {:bad_return, :deps, _, "not a key", {:invalid_key, "not a key"}} = e.reason
       assert {:ok, 1} == Workflow.fetch(wf2, :ok)
-      assert {:error, %GraphError{}, %Workflow{}} = Workflow.run(wf, [:unknown_dep])
+
+      assert {:error, e, %Workflow{}} = Workflow.run(wf, [:unknown_dep])
+
+      assert {:bad_return, :deps, _, :nope, {:unknown_rule, {:default, :nope, %{}}}} =
+               e.reason
     end
 
     test "does not continue the targets of a previous interrupted run" do
@@ -390,7 +408,10 @@ defmodule Ark.Workflow.KeysAndRunTest do
 
       {:ok, wf} = Workflow.run(wf, [:ok])
       {:error, %ComputationError{}, wf} = Workflow.run(wf, [:failed])
-      {:error, %GraphError{}, wf} = Workflow.run(wf, [:in_progress])
+
+      {:error, %GraphError{reason: {:bad_return, :deps, _, _, _}}, wf} =
+        Workflow.run(wf, [:in_progress])
+
       %{wf: wf}
     end
 
@@ -416,13 +437,20 @@ defmodule Ark.Workflow.KeysAndRunTest do
     end
 
     test "returns {:error, graph_error} for a key with no registered rule", %{wf: wf} do
-      assert {:error, %GraphError{}} = Workflow.fetch(wf, :missing)
-      assert {:error, %GraphError{}} = Workflow.fetch(wf, {NsA, :ok, %{}})
+      assert {:error,
+              %GraphError{rule: nil, reason: {:unknown_rule, {:default, :missing, %{}}}}} =
+               Workflow.fetch(wf, :missing)
+
+      assert {:error, %GraphError{reason: {:unknown_rule, {NsA, :ok, %{}}}}} =
+               Workflow.fetch(wf, {NsA, :ok, %{}})
     end
 
     test "returns {:error, graph_error} for an invalid key", %{wf: wf} do
-      assert {:error, %GraphError{}} = Workflow.fetch(wf, "ok")
-      assert {:error, %GraphError{}} = Workflow.fetch(wf, {:ok, [id: 1]})
+      assert {:error, %GraphError{reason: {:invalid_key, "ok"}}} =
+               Workflow.fetch(wf, "ok")
+
+      assert {:error, %GraphError{reason: {:invalid_params, {:ok, [id: 1]}}}} =
+               Workflow.fetch(wf, {:ok, [id: 1]})
     end
 
     test "accepts the key forms of run targets", %{wf: wf} do
@@ -462,7 +490,8 @@ defmodule Ark.Workflow.KeysAndRunTest do
     end
 
     test "returns a graph error for a key with no registered rule" do
-      assert {:error, %GraphError{}} = Workflow.attempts(Workflow.new(), :a)
+      assert {:error, %GraphError{reason: {:unknown_rule, {:default, :a, %{}}}}} =
+               Workflow.attempts(Workflow.new(), :a)
     end
   end
 end

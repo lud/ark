@@ -269,13 +269,17 @@ defmodule Ark.Workflow.MiddlewaresTest do
       :computation, _, call -> invoke(call)
     end
 
+    fun = fn _, _, _ -> :b end
+
     wf =
       Workflow.new()
       |> Workflow.add_rule(:b, const_rule(1))
-      |> Workflow.add_rule(:a, rule([fn _, _, _ -> :b end], ok_body(1)))
+      |> Workflow.add_rule(:a, rule([fun], ok_body(1)))
 
-    assert {:error, %GraphError{value: "not a key"}, wf} =
+    assert {:error, %GraphError{reason: reason}, wf} =
              Workflow.run(wf, [:a], middlewares: [mw])
+
+    assert {:bad_return, :deps, ^fun, "not a key", {:invalid_key, "not a key"}} = reason
 
     assert :error == Workflow.fetch(wf, :a)
   end

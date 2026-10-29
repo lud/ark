@@ -43,12 +43,36 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
     {e, wf}
   end
 
+  defp key(name, params \\ %{}) do
+    {:default, name, params}
+  end
+
   defp invalid_return_error(value) do
-    wf =
-      Workflow.add_rule(base_graph(), :r, rule([:a, fn _, _, _ -> value end], ok_body(1)))
+    fun = fn _, _, _ -> value end
+    wf = Workflow.add_rule(base_graph(), :r, rule([:a, fun], ok_body(1)))
 
     {e, _} = run_graph_error(wf, [:r])
+
+    assert %GraphError{
+             rule: {:default, :r},
+             key: {:default, :r, %{}},
+             alternative: :default,
+             reason: {:bad_return, :deps, ^fun, ^value, _}
+           } = e
+
     e
+  end
+
+  defp invalid_return_reason(value) do
+    {:bad_return, :deps, _, _, key_reason} = invalid_return_error(value).reason
+    key_reason
+  end
+
+  defp shadowing_reason(deps) do
+    wf = Workflow.add_rule(base_graph(), :r, rule(deps, ok_body(1)))
+    {e, _} = run_graph_error(wf, [:r])
+    assert {:bad_return, :deps, fun, _, {:shadowing, _, _} = shadowing} = e.reason
+    {fun, shadowing}
   end
 
   describe "a dependency function" do
@@ -300,7 +324,11 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
       |> Workflow.add_rule(:broken, rule([fn _, _, _ -> "not a key" end], ok_body(1)))
       |> Workflow.add_rule(:r, rule([deps_fun], deps_body()))
 
-    {_, wf} = run_graph_error(wf, [:r])
+    {e, wf} = run_graph_error(wf, [:r])
+
+    assert %GraphError{rule: {:default, :broken}, reason: {:bad_return, :deps, _, _, _}} =
+             e
+
     assert {:ok, :vb} == Workflow.fetch(wf, :b)
 
     track(phase, :second)
@@ -368,7 +396,8 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
          %{wf: wf} do
       {e, _} = run_graph_error(wf, [:top])
 
-      assert "invalid" == e.value
+      assert {:bad_return, :deps, _, "invalid", {:invalid_key, "invalid"}} = e.reason
+      assert {:default, :r} == e.rule
       assert {:default, :r, %{id: 1}} == e.key
       assert :second == e.alternative
     end
@@ -400,25 +429,22 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
   describe "invalid dependencies, each a graph error" do
     test "nil, true and false, reported as invalid returns, not as keys with no rule" do
       for value <- [nil, true, false] do
-        assert %GraphError{kind: :invalid_dependency, value: ^value} =
-                 invalid_return_error(value)
+        assert {:invalid_key, value} == invalid_return_reason(value)
       end
     end
 
     test "a string, a number, a function, a nested list, a list holding an alias map" do
-      for value <- [
-            "a",
-            1,
-            1.5,
-            fn -> :a end,
-            [[:a]],
-            [:a, [:b]],
-            [%{x: :a}],
-            [:a, %{x: :b}],
-            {:a, :b, :c, :d},
-            {:a}
+      for value <- ["a", 1, 1.5, fn -> :a end, {:a, :b, :c, :d}, {:a}] do
+        assert {:invalid_key, value} == invalid_return_reason(value)
+      end
+
+      for {value, given} <- [
+            {[[:a]], [:a]},
+            {[:a, [:b]], [:b]},
+            {[%{x: :a}], %{x: :a}},
+            {[:a, %{x: :b}], %{x: :b}}
           ] do
-        assert %GraphError{} = invalid_return_error(value)
+        assert {:invalid_key, given} == invalid_return_reason(value)
       end
     end
 
@@ -430,26 +456,26 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
     end
 
     test "a key with no registered rule" do
-      for value <- [
-            :missing,
-            {:missing, %{}},
-            {NsA, :a, %{}},
-            [:a, :missing],
-            %{x: :missing}
+      for {value, key} <- [
+            {:missing, key(:missing)},
+            {{:missing, %{}}, key(:missing)},
+            {{NsA, :a, %{}}, {NsA, :a, %{}}},
+            {[:a, :missing], key(:missing)},
+            {%{x: :missing}, key(:missing)}
           ] do
-        assert %GraphError{kind: :unknown_rule} = invalid_return_error(value)
+        assert {:unknown_rule, key} == invalid_return_reason(value)
       end
     end
 
     test "a key with a string ns or name" do
-      for value <- [
-            {"a", %{}},
-            {"default", :a, %{}},
-            {:default, "a", %{}},
-            ["a"],
-            %{x: "a"}
+      for {value, given} <- [
+            {{"a", %{}}, {"a", %{}}},
+            {{"default", :a, %{}}, {"default", :a, %{}}},
+            {{:default, "a", %{}}, {:default, "a", %{}}},
+            {["a"], "a"},
+            {%{x: "a"}, "a"}
           ] do
-        assert %GraphError{} = invalid_return_error(value)
+        assert {:invalid_key, given} == invalid_return_reason(value)
       end
     end
 
@@ -460,68 +486,48 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
             {:default, :a},
             {:a, %{p: self()}},
             {:a, %{p: [make_ref()]}},
-            {:default, :a, %{p: fn -> 1 end}},
-            [{:a, %{p: self()}}],
-            %{x: {:a, :b}}
+            {:default, :a, %{p: fn -> 1 end}}
           ] do
-        assert %GraphError{} = invalid_return_error(value)
+        assert {:invalid_params, value} == invalid_return_reason(value)
+      end
+
+      for {value, given} <- [
+            {[{:a, %{p: self()}}], {:a, %{p: self()}}},
+            {%{x: {:a, :b}}, {:a, :b}}
+          ] do
+        assert {:invalid_params, given} == invalid_return_reason(value)
       end
     end
 
     test "a key exposed under the same deps key as a different key to the left of the dependency function" do
-      wf =
-        Workflow.add_rule(
-          base_graph(),
-          :r,
-          rule([:a, fn _, _, _ -> %{a: :b} end], ok_body(1))
-        )
+      fun = fn _, _, _ -> %{a: :b} end
 
-      {e, _} = run_graph_error(wf, [:r])
-      assert :shadowing == e.kind
+      assert {^fun, {:shadowing, {:a, key(:a), :key}, {:a, key(:b), :alias}}} =
+               shadowing_reason([:a, fun])
 
-      wf =
-        Workflow.add_rule(
-          base_graph(),
-          :r,
-          rule([%{x: :a}, fn _, _, _ -> %{x: :b} end], ok_body(1))
-        )
+      fun = fn _, _, _ -> %{x: :b} end
 
-      {e, _} = run_graph_error(wf, [:r])
-      assert :shadowing == e.kind
+      assert {^fun, {:shadowing, {:x, key(:a), :alias}, {:x, key(:b), :alias}}} =
+               shadowing_reason([%{x: :a}, fun])
     end
 
     test "a key exposed under the same deps key as a static dependency to its right" do
-      wf =
-        Workflow.add_rule(
-          base_graph(),
-          :r,
-          rule([fn _, _, _ -> %{c: :b} end, :c], ok_body(1))
-        )
+      fun = fn _, _, _ -> %{c: :b} end
 
-      {e, _} = run_graph_error(wf, [:r])
-      assert :shadowing == e.kind
+      assert {^fun, {:shadowing, {:c, key(:b), :alias}, {:c, key(:c), :key}}} =
+               shadowing_reason([fun, :c])
     end
 
     test "a key exposed under the same deps key as a key returned by another dependency function of the alternative" do
-      wf =
-        Workflow.add_rule(
-          base_graph(),
-          :r,
-          rule([fn _, _, _ -> %{x: :a} end, fn _, _, _ -> %{x: :b} end], ok_body(1))
-        )
+      fun = fn _, _, _ -> %{x: :b} end
 
-      {e, _} = run_graph_error(wf, [:r])
-      assert :shadowing == e.kind
+      assert {^fun, {:shadowing, {:x, key(:a), :alias}, {:x, key(:b), :alias}}} =
+               shadowing_reason([fn _, _, _ -> %{x: :a} end, fun])
 
-      wf =
-        Workflow.add_rule(
-          base_graph(),
-          :r,
-          rule([fn _, _, _ -> :a end, fn _, _, _ -> %{a: :b} end], ok_body(1))
-        )
+      fun = fn _, _, _ -> %{a: :b} end
 
-      {e, _} = run_graph_error(wf, [:r])
-      assert :shadowing == e.kind
+      assert {^fun, {:shadowing, {:a, key(:a), :key}, {:a, key(:b), :alias}}} =
+               shadowing_reason([fn _, _, _ -> :a end, fun])
     end
   end
 

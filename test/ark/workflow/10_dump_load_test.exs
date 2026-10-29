@@ -618,11 +618,18 @@ defmodule Ark.Workflow.DumpLoadTest do
       capture_log(fn ->
         {:ok, loaded} = Workflow.load(reduced, data)
 
-        assert {:error, %GraphError{}, _} = Workflow.run(loaded, [:removed_rule])
-        assert {:error, %GraphError{}} = Workflow.fetch(loaded, :removed_rule)
+        removed = {:default, :removed_rule, %{}}
 
-        assert {:error, %GraphError{}} =
-                 Workflow.attempts(loaded, {NsA, :other_removed, %{id: 1}})
+        assert {:error, %GraphError{reason: {:unknown_rule, ^removed}}, _} =
+                 Workflow.run(loaded, [:removed_rule])
+
+        assert {:error, %GraphError{reason: {:unknown_rule, ^removed}}} =
+                 Workflow.fetch(loaded, :removed_rule)
+
+        other = {NsA, :other_removed, %{id: 1}}
+
+        assert {:error, %GraphError{reason: {:unknown_rule, ^other}}} =
+                 Workflow.attempts(loaded, other)
 
         loaded =
           Workflow.add_rule(
@@ -631,8 +638,11 @@ defmodule Ark.Workflow.DumpLoadTest do
             rule([fn _, _, _ -> :removed_rule end], ok_body(1))
           )
 
-        assert {:error, %GraphError{kind: :unknown_rule}, _} =
+        assert {:error,
+                %GraphError{reason: {:bad_return, :deps, _, :removed_rule, reason}}, _} =
                  Workflow.run(loaded, [:consumer])
+
+        assert {:unknown_rule, ^removed} = reason
       end)
     end
 
@@ -761,7 +771,10 @@ defmodule Ark.Workflow.DumpLoadTest do
 
     capture_log(fn ->
       wf = roundtrip(wf, reduced)
-      assert {:error, %GraphError{kind: :unknown_rule}, _} = Workflow.run(wf, [:r])
+      assert {:error, %GraphError{reason: reason}, _} = Workflow.run(wf, [:r])
+
+      assert {:bad_return, :deps, _, :gone, {:unknown_rule, {:default, :gone, %{}}}} =
+               reason
     end)
   end
 
