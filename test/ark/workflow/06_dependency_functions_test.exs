@@ -98,8 +98,8 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
     end
 
     test "is not called when a dependency to its left is failed" do
-      {pid, fun} = mock_fun(0, fn _, _, _ -> :a end)
-      wf = Workflow.add_rule(base_graph(), :r, rule([:a, :fail, fun], ok_body(1)))
+      {pid, never} = mock_never(fn _, _, _ -> :a end)
+      wf = Workflow.add_rule(base_graph(), :r, rule([:a, :fail, never], ok_body(1)))
 
       assert {:error, %ComputationError{}, _} = Workflow.run(wf, [:r])
       verify(pid)
@@ -312,12 +312,12 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
 
   describe "a dependency function that" do
     defp failing_deps_attempt(deps_fun) do
-      {pid, body} = mock_fun(0, ok_body(1))
+      {pid, never} = mock_never(ok_body(1))
 
       wf =
         Workflow.add_rule(base_graph(), :r, %{
           alts: [
-            first: %{deps: [:a, deps_fun], body: body},
+            first: %{deps: [:a, deps_fun], body: never},
             second: %{deps: [], body: ok_body(:second)}
           ]
         })

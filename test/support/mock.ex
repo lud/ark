@@ -8,8 +8,21 @@ defmodule Ark.Test.Mock do
   # The returned function raises when called more than `expected` times. As the
   # workflow engine catches raises from user code, `verify/1` is the reliable
   # check.
+  def mock_fun(0, impl) when is_function(impl) do
+    raise ArgumentError,
+          "mock_fun/2 expects at least one call, use mock_never/1 for a function that must not be called"
+  end
+
   def mock_fun(expected, impl)
-      when is_integer(expected) and expected >= 0 and is_function(impl) do
+      when is_integer(expected) and expected > 0 and is_function(impl) do
+    do_mock_fun(expected, impl)
+  end
+
+  def mock_never(impl) when is_function(impl) do
+    do_mock_fun(0, impl)
+  end
+
+  defp do_mock_fun(expected, impl) do
     pid = start_agent(%{expected: expected, calls: []})
     {:arity, arity} = Function.info(impl, :arity)
     {pid, wrap(arity, pid, impl)}

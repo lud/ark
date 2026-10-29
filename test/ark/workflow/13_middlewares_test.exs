@@ -194,10 +194,10 @@ defmodule Ark.Workflow.MiddlewaresTest do
 
   describe "a middleware that does not invoke the call" do
     test "replaces the body result with its own return value and prevents the user code from running" do
-      {pid, body} = mock_fun(0, ok_body(:from_body))
+      {pid, never} = mock_never(ok_body(:from_body))
       mw = fn :computation, _meta, _call -> {:ok, :from_middleware} end
 
-      wf = Workflow.add_rule(Workflow.new(), :a, rule([], body))
+      wf = Workflow.add_rule(Workflow.new(), :a, rule([], never))
       wf = run!(wf, [:a], middlewares: [mw])
 
       verify(pid)
@@ -205,7 +205,7 @@ defmodule Ark.Workflow.MiddlewaresTest do
     end
 
     test "for :deps supplies the keys to demand" do
-      {pid, deps_fun} = mock_fun(0, fn _, _, _ -> :a end)
+      {pid, never} = mock_never(fn _, _, _ -> :a end)
 
       mw = fn
         :deps, _meta, _call -> %{supplied: :b}
@@ -216,7 +216,7 @@ defmodule Ark.Workflow.MiddlewaresTest do
         Workflow.new()
         |> Workflow.add_rule(:a, const_rule(:va))
         |> Workflow.add_rule(:b, const_rule(:vb))
-        |> Workflow.add_rule(:r, rule([deps_fun], deps_body()))
+        |> Workflow.add_rule(:r, rule([never], deps_body()))
 
       wf = run!(wf, [:r], middlewares: [mw])
 

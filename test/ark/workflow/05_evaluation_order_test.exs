@@ -39,16 +39,19 @@ defmodule Ark.Workflow.EvaluationOrderTest do
     end
 
     test "the first failed dependency fails the alternative with {:dep_failed, dep_key}, without calling the body nor demanding the dependencies to its right" do
-      {body_pid, body} = mock_fun(0, ok_body(1))
-      {c_pid, c_body} = mock_fun(0, ok_body(1))
-      {deps_pid, deps_fun} = mock_fun(0, fn _, _, _ -> :c end)
+      {body_pid, never_body} = mock_never(ok_body(1))
+      {c_pid, never_c} = mock_never(ok_body(1))
+      {deps_pid, never_deps} = mock_never(fn _, _, _ -> :c end)
 
       wf =
         Workflow.new()
         |> Workflow.add_rule(:a, const_rule(:a))
         |> Workflow.add_rule(:fail, failing_rule())
-        |> Workflow.add_rule(:c, rule([], c_body))
-        |> Workflow.add_rule(:r, rule([:a, {:fail, %{id: 1}}, :c, deps_fun], body))
+        |> Workflow.add_rule(:c, rule([], never_c))
+        |> Workflow.add_rule(
+          :r,
+          rule([:a, {:fail, %{id: 1}}, :c, never_deps], never_body)
+        )
 
       assert {:error, %ComputationError{}, wf} = Workflow.run(wf, [:r])
 
@@ -103,7 +106,7 @@ defmodule Ark.Workflow.EvaluationOrderTest do
     end
 
     test "an alternative whose dependency is already failed fails without calling its body, and the next alternative is entered" do
-      {a1_pid, a1_body} = mock_fun(0, ok_body(:a1))
+      {a1_pid, never} = mock_never(ok_body(:a1))
       {b_pid, b_body} = mock_fun(1, error_body())
 
       wf =
@@ -111,7 +114,7 @@ defmodule Ark.Workflow.EvaluationOrderTest do
         |> Workflow.add_rule(:b, rule([], b_body))
         |> Workflow.add_rule(:a, %{
           alts: [
-            a1: %{deps: [:b], body: a1_body},
+            a1: %{deps: [:b], body: never},
             a2: %{deps: [], body: ok_body(:a2)}
           ]
         })
@@ -126,17 +129,17 @@ defmodule Ark.Workflow.EvaluationOrderTest do
     end
 
     test "no alternative is entered once one succeeded" do
-      {deps_pid, deps_fun} = mock_fun(0, fn _, _, _ -> :b end)
-      {body_pid, body} = mock_fun(0, ok_body(:two))
-      {b_pid, b_body} = mock_fun(0, ok_body(:b))
+      {deps_pid, never_deps} = mock_never(fn _, _, _ -> :b end)
+      {body_pid, never_body} = mock_never(ok_body(:two))
+      {b_pid, never_b} = mock_never(ok_body(:b))
 
       wf =
         Workflow.new()
-        |> Workflow.add_rule(:b, rule([], b_body))
+        |> Workflow.add_rule(:b, rule([], never_b))
         |> Workflow.add_rule(:r, %{
           alts: [
             one: %{deps: [], body: ok_body(:one)},
-            two: %{deps: [:b, deps_fun], body: body}
+            two: %{deps: [:b, never_deps], body: never_body}
           ]
         })
 
@@ -245,18 +248,18 @@ defmodule Ark.Workflow.EvaluationOrderTest do
   end
 
   test "nothing is computed unless it is a target or transitively demanded by one" do
-    {pid, body} = mock_fun(0, ok_body(1))
+    {pid, never} = mock_never(ok_body(1))
 
     wf =
       Workflow.new()
-      |> Workflow.add_rule(:unrelated, rule([], body))
-      |> Workflow.add_rule(:unrelated_dep, rule([], body))
-      |> Workflow.add_rule(:unrelated_consumer, rule([:a, :unrelated_dep], body))
+      |> Workflow.add_rule(:unrelated, rule([], never))
+      |> Workflow.add_rule(:unrelated_dep, rule([], never))
+      |> Workflow.add_rule(:unrelated_consumer, rule([:a, :unrelated_dep], never))
       |> Workflow.add_rule(:a, const_rule(1))
       |> Workflow.add_rule(:r, %{
         alts: [
           one: %{deps: [:a], body: ok_body(1)},
-          two: %{deps: [:unrelated], body: body}
+          two: %{deps: [:unrelated], body: never}
         ]
       })
 
@@ -362,14 +365,14 @@ defmodule Ark.Workflow.EvaluationOrderTest do
     end
 
     test "the first failed target stops the run, later targets are never demanded" do
-      {pid, body} = mock_fun(0, ok_body(1))
+      {pid, never} = mock_never(ok_body(1))
 
       wf =
         Workflow.new()
         |> Workflow.add_rule(:a, const_rule(:a))
         |> Workflow.add_rule(:fail, rule([:fail_dep], ok_body(1)))
         |> Workflow.add_rule(:fail_dep, failing_rule())
-        |> Workflow.add_rule(:later, rule([], body))
+        |> Workflow.add_rule(:later, rule([], never))
 
       assert {:error, %ComputationError{target: {:default, :fail, %{}}}, wf} =
                Workflow.run(wf, [:a, :fail, :later])
