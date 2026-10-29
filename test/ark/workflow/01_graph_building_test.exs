@@ -140,119 +140,126 @@ defmodule Ark.Workflow.GraphBuildingTest do
   end
 
   defp assert_rejected(rule_map) do
-    assert_raise GraphError, fn -> Workflow.add_rule(Workflow.new(), :r, rule_map) end
+    e = assert_raise GraphError, fn -> Workflow.add_rule(Workflow.new(), :r, rule_map) end
+    assert {:default, :r} == e.rule
+    assert nil == e.key
+    e
   end
 
-  defp assert_rejected_dep(dep) do
-    assert_rejected(rule([dep], ok_body(1)))
+  defp assert_invalid_rule(rule_map) do
+    assert {:invalid_rule, %Ark.Opts.Error{}} = assert_rejected(rule_map).reason
+  end
+
+  defp rejected_dep_reason(dep) do
+    rejected_deps_reason([dep])
+  end
+
+  defp rejected_deps_reason(deps) do
+    e = assert_rejected(rule(deps, ok_body(1)))
+    assert :default == e.alternative
+    e.reason
+  end
+
+  defp assert_invalid_identity(identity) do
+    e =
+      assert_raise GraphError, fn ->
+        Workflow.add_rule(Workflow.new(), identity, const_rule(1))
+      end
+
+    assert {:invalid_identity, identity} == e.reason
+    assert nil == e.rule
   end
 
   describe "registering a rule" do
     test "twice under the same {ns, name} is an error" do
       wf = Workflow.add_rule(Workflow.new(), :a, const_rule(1))
 
-      assert_raise GraphError, fn -> Workflow.add_rule(wf, :a, const_rule(2)) end
+      e = assert_raise GraphError, fn -> Workflow.add_rule(wf, :a, const_rule(2)) end
 
-      assert_raise GraphError, fn ->
-        Workflow.add_rule(wf, {:default, :a}, const_rule(2))
-      end
+      assert %GraphError{rule: {:default, :a}, reason: {:duplicate_rule, {:default, :a}}} =
+               e
+
+      e =
+        assert_raise GraphError, fn ->
+          Workflow.add_rule(wf, {:default, :a}, const_rule(2))
+        end
+
+      assert {:duplicate_rule, {:default, :a}} == e.reason
 
       wf = Workflow.add_rule(wf, {NsA, :a}, const_rule(1))
-      assert_raise GraphError, fn -> Workflow.add_rule(wf, {NsA, :a}, const_rule(2)) end
+
+      e =
+        assert_raise GraphError, fn -> Workflow.add_rule(wf, {NsA, :a}, const_rule(2)) end
+
+      assert %GraphError{rule: {NsA, :a}, reason: {:duplicate_rule, {NsA, :a}}} = e
     end
 
     test "with an empty alternative list is an error" do
-      assert_rejected(%{alts: []})
+      assert_invalid_rule(%{alts: []})
     end
 
     test "with two alternatives of the same name is an error" do
       alt = %{deps: [], body: ok_body(1)}
-      assert_rejected(%{alts: [one: alt, two: alt, one: alt]})
+      assert_invalid_rule(%{alts: [one: alt, two: alt, one: alt]})
     end
 
     test "under a string ns or name is rejected" do
-      assert_raise GraphError, fn ->
-        Workflow.add_rule(Workflow.new(), Enum.random(["a"]), const_rule(1))
-      end
-
-      assert_raise GraphError, fn ->
-        Workflow.add_rule(Workflow.new(), {"Elixir.NsA", :a}, const_rule(1))
-      end
-
-      assert_raise GraphError, fn ->
-        Workflow.add_rule(Workflow.new(), {NsA, "a"}, const_rule(1))
-      end
+      assert_invalid_identity(Enum.random(["a"]))
+      assert_invalid_identity({"Elixir.NsA", :a})
+      assert_invalid_identity({NsA, "a"})
     end
 
     test "with a string alternative name is rejected" do
-      assert_rejected(%{alts: [{"default", %{deps: [], body: ok_body(1)}}]})
+      assert_invalid_rule(%{alts: [{"default", %{deps: [], body: ok_body(1)}}]})
     end
 
     test "with an ns, name or alternative name that is neither an atom nor a string is rejected" do
       for bad <- [1, {:a, :b, :c}, [:a], %{}] do
-        assert_raise GraphError, fn ->
-          Workflow.add_rule(Workflow.new(), bad, const_rule(1))
-        end
-
-        assert_raise GraphError, fn ->
-          Workflow.add_rule(Workflow.new(), {bad, :a}, const_rule(1))
-        end
-
-        assert_raise GraphError, fn ->
-          Workflow.add_rule(Workflow.new(), {NsA, bad}, const_rule(1))
-        end
-
-        assert_rejected(%{alts: [{bad, %{deps: [], body: ok_body(1)}}]})
+        assert_invalid_identity(bad)
+        assert_invalid_identity({bad, :a})
+        assert_invalid_identity({NsA, bad})
+        assert_invalid_rule(%{alts: [{bad, %{deps: [], body: ok_body(1)}}]})
       end
     end
 
     test "with nil, true or false as ns, name or alternative name is rejected" do
       for bad <- [nil, true, false] do
-        assert_raise GraphError, fn ->
-          Workflow.add_rule(Workflow.new(), bad, const_rule(1))
-        end
-
-        assert_raise GraphError, fn ->
-          Workflow.add_rule(Workflow.new(), {bad, :a}, const_rule(1))
-        end
-
-        assert_raise GraphError, fn ->
-          Workflow.add_rule(Workflow.new(), {NsA, bad}, const_rule(1))
-        end
-
-        assert_rejected(%{alts: [{bad, %{deps: [], body: ok_body(1)}}]})
+        assert_invalid_identity(bad)
+        assert_invalid_identity({bad, :a})
+        assert_invalid_identity({NsA, bad})
+        assert_invalid_rule(%{alts: [{bad, %{deps: [], body: ok_body(1)}}]})
       end
     end
 
     test "without alts is rejected" do
-      assert_rejected(%{})
-      assert_rejected(%{dump: fn x -> x end, load: fn x -> x end})
+      assert_invalid_rule(%{})
+      assert_invalid_rule(%{dump: fn x -> x end, load: fn x -> x end})
     end
 
     test "that is not a map is rejected" do
-      assert_rejected(alts: [default: %{deps: [], body: ok_body(1)}])
-      assert_rejected(nil)
+      assert_invalid_rule(alts: [default: %{deps: [], body: ok_body(1)}])
+      assert_invalid_rule(nil)
     end
 
     test "with alts that is not a keyword list is rejected" do
-      assert_rejected(%{alts: %{default: %{deps: [], body: ok_body(1)}}})
-      assert_rejected(%{alts: [%{deps: [], body: ok_body(1)}]})
+      assert_invalid_rule(%{alts: %{default: %{deps: [], body: ok_body(1)}}})
+      assert_invalid_rule(%{alts: [%{deps: [], body: ok_body(1)}]})
     end
 
     test "with an alternative without deps or without body is rejected" do
-      assert_rejected(%{alts: [default: %{body: ok_body(1)}]})
-      assert_rejected(%{alts: [default: %{deps: []}]})
-      assert_rejected(%{alts: [default: %{}]})
+      assert_invalid_rule(%{alts: [default: %{body: ok_body(1)}]})
+      assert_invalid_rule(%{alts: [default: %{deps: []}]})
+      assert_invalid_rule(%{alts: [default: %{}]})
     end
 
     test "with an unknown key in the rule map or in an alternative map is rejected" do
-      assert_rejected(%{alts: [default: %{deps: [], body: ok_body(1)}], other: 1})
-      assert_rejected(%{alts: [default: %{deps: [], body: ok_body(1), other: 1}]})
+      assert_invalid_rule(%{alts: [default: %{deps: [], body: ok_body(1)}], other: 1})
+      assert_invalid_rule(%{alts: [default: %{deps: [], body: ok_body(1), other: 1}]})
     end
 
     test "with deps that is not a list is rejected" do
-      assert_rejected(%{alts: [default: %{deps: :a, body: ok_body(1)}]})
-      assert_rejected(%{alts: [default: %{deps: %{a: :a}, body: ok_body(1)}]})
+      assert_invalid_rule(%{alts: [default: %{deps: :a, body: ok_body(1)}]})
+      assert_invalid_rule(%{alts: [default: %{deps: %{a: :a}, body: ok_body(1)}]})
     end
 
     test "registers the alternatives of alts in list order" do
@@ -331,7 +338,9 @@ defmodule Ark.Workflow.GraphBuildingTest do
     test "{ns, name} is in namespace ns" do
       wf = Workflow.add_rule(Workflow.new(), {NsA, :a}, const_rule(1))
 
-      assert {:error, %GraphError{}, _} = Workflow.run(wf, [:a])
+      assert {:error,
+              %GraphError{rule: nil, reason: {:unknown_rule, {:default, :a, %{}}}}, _} =
+               Workflow.run(wf, [:a])
 
       wf = run!(wf, [{NsA, :a, %{}}])
       assert 1 == fetch!(wf, {NsA, :a, %{}})
@@ -380,7 +389,14 @@ defmodule Ark.Workflow.GraphBuildingTest do
         |> Workflow.add_rule(:first, rule([], never))
         |> Workflow.add_rule(:a, rule([:missing], ok_body(1)))
 
-      assert {:error, %GraphError{}, wf2} = Workflow.run(wf, [:first, :a])
+      assert {:error, e, wf2} = Workflow.run(wf, [:first, :a])
+
+      assert %GraphError{
+               rule: {:default, :a},
+               key: nil,
+               alternative: :default,
+               reason: {:unknown_rule, {:default, :missing, %{}}}
+             } = e
 
       verify(pid)
       assert :error == Workflow.fetch(wf2, :first)
@@ -394,45 +410,53 @@ defmodule Ark.Workflow.GraphBuildingTest do
         |> Workflow.add_rule(:first, rule([], never))
         |> Workflow.add_rule(:other, rule([{NsA, :missing, %{}}], ok_body(1)))
 
-      assert {:error, %GraphError{}, _} = Workflow.run(wf, [:first])
+      assert {:error, e, _} = Workflow.run(wf, [:first])
       verify(pid)
+
+      assert %GraphError{
+               rule: {:default, :other},
+               alternative: :default,
+               reason: {:unknown_rule, {NsA, :missing, %{}}}
+             } = e
     end
 
     test "with a string ns or name is rejected when the rule is registered" do
-      assert_rejected_dep("b")
-      assert_rejected_dep({"b", %{}})
-      assert_rejected_dep({"Elixir.NsA", :b, %{}})
-      assert_rejected_dep({NsA, "b", %{}})
+      for dep <- ["b", {"b", %{}}, {"Elixir.NsA", :b, %{}}, {NsA, "b", %{}}] do
+        assert {:invalid_key, dep} == rejected_dep_reason(dep)
+      end
     end
 
     test "with nil, true or false as ns or name is rejected when the rule is registered" do
-      for bad <- [nil, true, false] do
-        assert_rejected_dep(bad)
-        assert_rejected_dep({bad, %{}})
-        assert_rejected_dep({bad, :b, %{}})
-        assert_rejected_dep({NsA, bad, %{}})
+      for bad <- [nil, true, false],
+          dep <- [bad, {bad, %{}}, {bad, :b, %{}}, {NsA, bad, %{}}] do
+        assert {:invalid_key, dep} == rejected_dep_reason(dep)
       end
     end
 
     test "with params containing a pid, port, reference or function, at any depth, is rejected when the rule is registered" do
       port = Port.open({:spawn, "true"}, [])
 
-      for bad <- [self(), port, make_ref(), fn -> :ok end, &String.upcase/1] do
-        assert_rejected_dep({:b, %{x: bad}})
-        assert_rejected_dep({NsA, :b, %{x: bad}})
-        assert_rejected_dep({:b, %{x: [1, %{"y" => {:ok, bad}}]}})
-        assert_rejected_dep({:b, %{bad => 1}})
+      for bad <- [self(), port, make_ref(), fn -> :ok end, &String.upcase/1],
+          dep <- [
+            {:b, %{x: bad}},
+            {NsA, :b, %{x: bad}},
+            {:b, %{x: [1, %{"y" => {:ok, bad}}]}},
+            {:b, %{bad => 1}}
+          ] do
+        assert {:invalid_params, dep} == rejected_dep_reason(dep)
       end
     end
 
     test "written {ns, name} (forgotten params) is rejected as invalid params" do
-      assert_rejected_dep({NsA, :b})
+      e = assert_rejected(rule([{NsA, :b}], ok_body(1)))
+      assert {:invalid_params, {NsA, :b}} == e.reason
+      assert Exception.message(e) =~ inspect({NsA, :b, %{}})
     end
 
     test "with params that are not a map is rejected as invalid params" do
-      assert_rejected_dep({:b, [id: 1]})
-      assert_rejected_dep({:b, 1})
-      assert_rejected_dep({NsA, :b, 1})
+      for dep <- [{:b, [id: 1]}, {:b, 1}, {NsA, :b, 1}] do
+        assert {:invalid_params, dep} == rejected_dep_reason(dep)
+      end
     end
 
     test "naming a rule registered later in the graph is accepted" do
@@ -446,43 +470,59 @@ defmodule Ark.Workflow.GraphBuildingTest do
     end
 
     test "that is neither a key, an alias map nor a function is rejected" do
-      assert_rejected_dep(1)
-      assert_rejected_dep([:b])
-      assert_rejected_dep({:a, :b, :c, :d})
+      for dep <- [1, [:b], {:a, :b, :c, :d}] do
+        assert {:invalid_key, dep} == rejected_dep_reason(dep)
+      end
     end
   end
 
   test "the checks on static dependencies apply to the keys inside a static alias map" do
-    assert_rejected_dep(%{x: "b"})
-    assert_rejected_dep(%{x: {NsA, "b", %{}}})
-    assert_rejected_dep(%{x: nil})
-    assert_rejected_dep(%{x: {:b, %{p: self()}}})
-    assert_rejected_dep(%{x: {NsA, :b}})
-    assert_rejected_dep(%{x: {:b, [id: 1]}})
-    assert_rejected_dep(%{x: 1})
+    for value <- ["b", {NsA, "b", %{}}, nil, 1] do
+      assert {:invalid_key, value} == rejected_dep_reason(%{x: value})
+    end
+
+    for value <- [{:b, %{p: self()}}, {NsA, :b}, {:b, [id: 1]}] do
+      assert {:invalid_params, value} == rejected_dep_reason(%{x: value})
+    end
   end
 
   test "a static alias map whose value is a dependency function is rejected" do
-    assert_rejected_dep(%{x: fn _, _, _ -> :b end})
-    assert_rejected_dep(%{x: &CompiledCaptures.deps_of/3})
-    assert_rejected_dep(%{x: {CompiledTuples, :deps_of, [:base]}})
+    for fun <- [fn _, _, _ -> :b end, &CompiledCaptures.deps_of/3] do
+      assert {:invalid_key, fun} == rejected_dep_reason(%{x: fun})
+    end
+
+    tuple = {CompiledTuples, :deps_of, [:base]}
+    assert {:invalid_params, tuple} == rejected_dep_reason(%{x: tuple})
   end
 
   describe "two different static keys of one alternative exposed under the same deps key" do
     test "are rejected under the same alias" do
-      assert_rejected(rule([%{x: :b}, %{x: :c}], ok_body(1)))
-      assert_rejected(rule([%{x: :b}, %{x: {:b, %{id: 1}}}], ok_body(1)))
+      e = assert_rejected(rule([%{x: :b}, %{x: :c}], ok_body(1)))
+
+      assert {:shadowing, {:x, {:default, :b, %{}}, :alias},
+              {:x, {:default, :c, %{}}, :alias}} ==
+               e.reason
+
+      e = assert_rejected(rule([%{x: :b}, %{x: {:b, %{id: 1}}}], ok_body(1)))
+
+      assert {:shadowing, {:x, {:default, :b, %{}}, :alias},
+              {:x, {:default, :b, %{id: 1}}, :alias}} == e.reason
     end
 
     test "are rejected as shadowing when an alias shadows the written form of another dependency" do
-      for deps <- [
-            [:b, %{b: :c}],
-            [%{b: :c}, :b],
-            [{:b, %{id: 1}}, %{{:b, %{id: 1}} => :c}],
-            [{NsA, :b, %{}}, %{{NsA, :b, %{}} => :c}]
+      b = {:default, :b, %{}}
+      b1 = {:default, :b, %{id: 1}}
+      c = {:default, :c, %{}}
+      ns_b = {NsA, :b, %{}}
+
+      for {deps, expected} <- [
+            {[:b, %{b: :c}], {:shadowing, {:b, b, :key}, {:b, c, :alias}}},
+            {[%{b: :c}, :b], {:shadowing, {:b, c, :alias}, {:b, b, :key}}},
+            {[{:b, %{id: 1}}, %{{:b, %{id: 1}} => :c}],
+             {:shadowing, {{:b, %{id: 1}}, b1, :key}, {{:b, %{id: 1}}, c, :alias}}},
+            {[ns_b, %{ns_b => :c}], {:shadowing, {ns_b, ns_b, :key}, {ns_b, c, :alias}}}
           ] do
-        e = assert_rejected(rule(deps, ok_body(1)))
-        assert :shadowing == e.kind
+        assert expected == rejected_deps_reason(deps)
       end
     end
   end
@@ -587,7 +627,9 @@ defmodule Ark.Workflow.GraphBuildingTest do
 
       wf = run!(wf, [{NsA, :a, %{}}])
       assert 1 == fetch!(wf, {NsA, :a, %{}})
-      assert {:error, %GraphError{}} = Workflow.fetch(wf, :a)
+
+      assert {:error, %GraphError{reason: {:unknown_rule, {:default, :a, %{}}}}} =
+               Workflow.fetch(wf, :a)
     end
 
     test "resolves the dependencies written without namespace in those rules to its namespace" do
@@ -617,12 +659,29 @@ defmodule Ark.Workflow.GraphBuildingTest do
     end
 
     test "raises when the callback does not return a graph" do
-      assert_raise GraphError, fn ->
-        Workflow.add_ns(Workflow.new(), NsA, fn _ -> :oops end)
-      end
+      callback = fn _ -> :oops end
 
-      assert_raise GraphError, fn ->
-        Workflow.add_ns(Workflow.new(), NsA, fn g -> {:ok, g} end)
+      e =
+        assert_raise GraphError, fn -> Workflow.add_ns(Workflow.new(), NsA, callback) end
+
+      assert %GraphError{
+               rule: nil,
+               reason: {:bad_return, :add_ns, ^callback, :oops, :not_a_graph}
+             } = e
+
+      callback = fn g -> {:ok, g} end
+
+      e =
+        assert_raise GraphError, fn -> Workflow.add_ns(Workflow.new(), NsA, callback) end
+
+      assert {:bad_return, :add_ns, ^callback, {:ok, %Workflow{}}, :not_a_graph} =
+               e.reason
+    end
+
+    test "raises for a namespace that is not an address" do
+      for bad <- ["NsA", nil, true, 1] do
+        e = assert_raise GraphError, fn -> Workflow.add_ns(Workflow.new(), bad, & &1) end
+        assert %GraphError{rule: nil, reason: {:invalid_namespace, ^bad}} = e
       end
     end
   end
@@ -648,14 +707,20 @@ defmodule Ark.Workflow.GraphBuildingTest do
     test "register the rules of the inner callback in the inner namespace" do
       wf = run!(nested_graph(), [{NsB, :inner, %{}}])
       assert %{leaf: :leaf_b} == fetch!(wf, {NsB, :inner, %{}})
-      assert {:error, %GraphError{}} = Workflow.fetch(wf, {NsA, :inner, %{}})
+
+      assert {:error, %GraphError{reason: {:unknown_rule, {NsA, :inner, %{}}}}} =
+               Workflow.fetch(wf, {NsA, :inner, %{}})
     end
 
     test "restore the enclosing namespace when the inner callback returns" do
       wf = run!(nested_graph(), [{NsA, :after, %{}}])
       assert %{leaf: :leaf_a} == fetch!(wf, {NsA, :after, %{}})
-      assert {:error, %GraphError{}} = Workflow.fetch(wf, {NsB, :after, %{}})
-      assert {:error, %GraphError{}} = Workflow.fetch(wf, :after)
+
+      assert {:error, %GraphError{reason: {:unknown_rule, {NsB, :after, %{}}}}} =
+               Workflow.fetch(wf, {NsB, :after, %{}})
+
+      assert {:error, %GraphError{reason: {:unknown_rule, {:default, :after, %{}}}}} =
+               Workflow.fetch(wf, :after)
     end
 
     test "resolve the dependencies written without namespace to the namespace of each rule" do
@@ -775,8 +840,8 @@ defmodule Ark.Workflow.GraphBuildingTest do
   describe "an anonymous function or a remote capture of the wrong arity is rejected when the rule is registered" do
     test "as a body or a dependency function (arity 3)" do
       for bad <- [fn -> :ok end, fn _ -> :ok end, fn _, _ -> :ok end, &String.upcase/1] do
-        assert_rejected(rule([], bad))
-        assert_rejected(rule([bad], ok_body(1)))
+        assert_invalid_rule(rule([], bad))
+        assert_invalid_rule(rule([bad], ok_body(1)))
       end
     end
 
@@ -787,15 +852,15 @@ defmodule Ark.Workflow.GraphBuildingTest do
             &String.upcase/2,
             &CompiledCaptures.base/3
           ] do
-        assert_rejected(Map.put(const_rule(1), :dump, bad))
-        assert_rejected(Map.put(const_rule(1), :load, bad))
+        assert_invalid_rule(Map.put(const_rule(1), :dump, bad))
+        assert_invalid_rule(Map.put(const_rule(1), :load, bad))
       end
     end
 
     test "as a body, a tuple that is not {atom, atom, list} is rejected" do
-      assert_rejected(rule([], {CompiledTuples, :base}))
-      assert_rejected(rule([], {CompiledTuples, :base, 10}))
-      assert_rejected(rule([], {"Elixir.CompiledTuples", :base, []}))
+      assert_invalid_rule(rule([], {CompiledTuples, :base}))
+      assert_invalid_rule(rule([], {CompiledTuples, :base, 10}))
+      assert_invalid_rule(rule([], {"Elixir.CompiledTuples", :base, []}))
     end
   end
 

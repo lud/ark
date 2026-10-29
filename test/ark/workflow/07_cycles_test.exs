@@ -15,7 +15,9 @@ defmodule Ark.Workflow.CyclesTest do
   end
 
   defp assert_cycle(wf, targets) do
-    assert {:error, %GraphError{kind: :cycle} = e, wf} = Workflow.run(wf, targets)
+    assert {:error, %GraphError{reason: {:cycle, _, _}} = e, wf} =
+             Workflow.run(wf, targets)
+
     {e, wf}
   end
 
@@ -29,8 +31,14 @@ defmodule Ark.Workflow.CyclesTest do
 
     {e, wf} = assert_cycle(wf, [:top])
 
-    assert key(:a) == e.key
-    assert [key(:top), key(:a), key(:b)] == e.stack
+    assert {:cycle, key(:a), [key(:top), key(:a), key(:b)]} == e.reason
+
+    assert %GraphError{
+             rule: {:default, :b},
+             key: {:default, :b, %{}},
+             alternative: :default
+           } = e
+
     assert {:ok, 1} == Workflow.fetch(wf, :ok)
 
     for name <- [:top, :a, :b] do
@@ -51,8 +59,8 @@ defmodule Ark.Workflow.CyclesTest do
     {e, wf} = assert_cycle(wf, [:a])
 
     verify(pid)
-    assert key(:a) == e.key
-    assert [key(:a), key(:b), key(:c)] == e.stack
+    assert {:cycle, key(:a), [key(:a), key(:b), key(:c)]} == e.reason
+    assert key(:c) == e.key
 
     for name <- [:a, :b, :c] do
       assert :error == Workflow.fetch(wf, name)
@@ -79,8 +87,8 @@ defmodule Ark.Workflow.CyclesTest do
   test "a direct self-dependency makes run stop with a graph error" do
     wf = Workflow.add_rule(Workflow.new(), :a, rule([:a], ok_body(1)))
     {e, _} = assert_cycle(wf, [:a])
+    assert {:cycle, key(:a), [key(:a)]} == e.reason
     assert key(:a) == e.key
-    assert [key(:a)] == e.stack
 
     wf =
       Workflow.add_rule(
@@ -90,6 +98,7 @@ defmodule Ark.Workflow.CyclesTest do
       )
 
     {e, _} = assert_cycle(wf, [:a])
+    assert {:cycle, key(:a), [key(:a)]} == e.reason
     assert key(:a) == e.key
   end
 
@@ -103,7 +112,8 @@ defmodule Ark.Workflow.CyclesTest do
       )
 
     {e, _} = assert_cycle(wf, [{NsA, :a, %{}}])
-    assert {NsA, :a, %{}} == e.key
+    assert {:cycle, {NsA, :a, %{}}, [{NsA, :a, %{}}, {NsA, :b, %{}}]} == e.reason
+    assert {NsA, :b, %{}} == e.key
 
     wf =
       Workflow.new()
@@ -111,7 +121,8 @@ defmodule Ark.Workflow.CyclesTest do
       |> Workflow.add_rule(:b, rule([{:default, :a, %{}}], ok_body(1)))
 
     {e, _} = assert_cycle(wf, [{:a, %{}}])
-    assert key(:a) == e.key
+    assert {:cycle, key(:a), [key(:a), key(:b)]} == e.reason
+    assert key(:b) == e.key
   end
 
   test "a cycle reachable only through a later alternative makes run stop with a graph error when that alternative is entered" do
@@ -138,7 +149,8 @@ defmodule Ark.Workflow.CyclesTest do
     assert :one == fetch!(wf, :a)
 
     {e, wf} = assert_cycle(cyclic.({:error, :x}), [:a])
-    assert key(:a) == e.key
+    assert {:cycle, key(:a), [key(:a), key(:b)]} == e.reason
+    assert %GraphError{key: {:default, :b, %{}}, alternative: :default} = e
     assert [:one, :one] == logged(log)
     assert :error == Workflow.fetch(wf, :a)
     assert {:ok, %{one: {:computation_error, _}}} = Workflow.attempts(wf, :a)
