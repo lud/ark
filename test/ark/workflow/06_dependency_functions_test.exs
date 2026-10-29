@@ -152,7 +152,7 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
       assert %{x: :va, y: :vb, z: :vn} == fetch!(wf, :r)
     end
 
-    test "as a list are exposed under their shortest forms" do
+    test "as a list are exposed under their written forms" do
       wf =
         base_graph()
         |> Workflow.add_rule({NsA, :n}, rule([], params_body()))
@@ -166,11 +166,15 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
 
       wf = run!(wf, [:r])
 
-      assert %{:a => :va, :b => :vb, :c => :vc, {NsA, :n, %{id: 1}} => %{id: 1}} ==
-               fetch!(wf, :r)
+      assert %{
+               :a => :va,
+               {:b, %{}} => :vb,
+               {:default, :c, %{}} => :vc,
+               {NsA, :n, %{id: 1}} => %{id: 1}
+             } == fetch!(wf, :r)
     end
 
-    test "as a single key are exposed under its shortest form" do
+    test "as a single key are exposed under its written form" do
       wf =
         base_graph()
         |> Workflow.add_rule(:p, rule([], params_body()))
@@ -182,7 +186,7 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
 
       wf = run!(wf, [:r1, :r2])
 
-      assert %{a: :va} == fetch!(wf, :r1)
+      assert %{{:default, :a, %{}} => :va} == fetch!(wf, :r1)
       assert %{{:p, %{id: 1}} => %{id: 1}} == fetch!(wf, :r2)
     end
 
@@ -528,7 +532,7 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
       wf =
         Workflow.new()
         |> Workflow.add_rule(:a, rule([], body))
-        |> Workflow.add_rule(:r1, rule([:a, fn _, _, _ -> {:a, %{}} end], deps_body()))
+        |> Workflow.add_rule(:r1, rule([:a, fn _, _, _ -> :a end], deps_body()))
         |> Workflow.add_rule(
           :r2,
           rule([fn _, _, _ -> %{x: :a} end, %{x: :a}], deps_body())
@@ -560,6 +564,20 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
       verify(pid)
       assert %{x: :va} == fetch!(wf, :r)
     end
+  end
+
+  test "a key returned by a dependency function that is also another dependency of the alternative in another written form is demanded once and exposed under both forms" do
+    {pid, body} = mock_fun(1, ok_body(:va))
+
+    wf =
+      Workflow.new()
+      |> Workflow.add_rule(:a, rule([], body))
+      |> Workflow.add_rule(:r, rule([:a, fn _, _, _ -> {:a, %{}} end], deps_body()))
+
+    wf = run!(wf, [:r])
+
+    verify(pid)
+    assert %{:a => :va, {:a, %{}} => :va} == fetch!(wf, :r)
   end
 
   test "a key returned by a dependency function naming an existing rule whose computation fails fails the alternative with {:dep_failed, key}" do

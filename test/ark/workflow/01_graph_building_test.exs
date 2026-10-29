@@ -474,7 +474,7 @@ defmodule Ark.Workflow.GraphBuildingTest do
       assert_rejected(rule([%{x: :b}, %{x: {:b, %{id: 1}}}], ok_body(1)))
     end
 
-    test "are rejected as shadowing when an alias shadows the exposed form of another dependency" do
+    test "are rejected as shadowing when an alias shadows the written form of another dependency" do
       for deps <- [
             [:b, %{b: :c}],
             [%{b: :c}, :b],
@@ -488,7 +488,7 @@ defmodule Ark.Workflow.GraphBuildingTest do
   end
 
   describe "the same static key listed twice in one alternative is accepted and demanded once" do
-    test "in two forms (:a and {ns, :a, %{}})" do
+    test "in two forms (:a and {ns, :a, %{}}), exposed under each form" do
       {pid, body} = mock_fun(1, ok_body(1))
 
       wf =
@@ -502,10 +502,10 @@ defmodule Ark.Workflow.GraphBuildingTest do
       wf = run!(wf, [{NsA, :r, %{}}])
 
       verify(pid)
-      assert %{a: 1} == fetch!(wf, {NsA, :r, %{}})
+      assert %{:a => 1, {NsA, :a, %{}} => 1, {:a, %{}} => 1} == fetch!(wf, {NsA, :r, %{}})
     end
 
-    test "in two forms in the :default namespace" do
+    test "in two forms in the :default namespace, exposed under each form" do
       {pid, body} = mock_fun(1, ok_body(1))
 
       wf =
@@ -516,7 +516,7 @@ defmodule Ark.Workflow.GraphBuildingTest do
       wf = run!(wf, [:r])
 
       verify(pid)
-      assert %{a: 1} == fetch!(wf, :r)
+      assert %{:a => 1, {:default, :a, %{}} => 1} == fetch!(wf, :r)
     end
 
     test "under the same alias in two alias maps" do
