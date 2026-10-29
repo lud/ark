@@ -293,15 +293,18 @@ split: separate entries in a static list, or successive dependency
 functions.
 
 `deps` is a plain map, so bodies can pattern-match on it. A dependency
-without an alias is exposed under its shortest form: `name` in the same
-namespace with params `%{}`, `{name, params}` in the same namespace,
-`{ns, name, params}` otherwise. `{__MODULE__, :account, %{}}` declared in
-`__MODULE__` is exposed as `:account`.
+without an alias is exposed under the term written by the code that
+demands it: `:account` is exposed as `:account`, `{:account, %{}}` as
+`{:account, %{}}`, and `{__MODULE__, :account, %{}}` as
+`{__MODULE__, :account, %{}}`. Code that builds `{name, params}` finds
+the value under that same term, whether `params` is empty or not.
 
 The same key listed more than once in one alternative, in any form or
-under the same alias, is accepted and demanded once. Two **different**
-keys of one alternative exposed under the same `deps` key are an error,
-including an alias that shadows the exposed form of another dependency.
+under the same alias, is accepted and demanded once. Listed in several
+forms, it is exposed under each of them: `[:a, {:a, %{}}]` exposes the
+value of `:a` under `:a` and `{:a, %{}}`. Two **different** keys of one
+alternative exposed under the same `deps` key are an error, including an
+alias that shadows the written form of another dependency.
 The error carries a kind or tag so its message can call out the
 shadowing. It is rejected by `add_rule`, or is a graph error when a
 dependency function returns it (§5). Each alternative has its own `deps`
@@ -393,8 +396,8 @@ A dependency function returns one of:
 - a **single key**, e.g. `:settings`. Returning an atom reads best for
   dependencies without params.
 
-Keys returned without an alias are exposed in `deps` under their
-shortest form (§4). An empty map or empty list
+Keys returned without an alias are exposed in `deps` under the term
+the function returned (§4). An empty map or empty list
 demands nothing: a dependency function can make a dependency conditional.
 
 A value is recorded under its **real identity** — never under an alias. Two
@@ -1242,12 +1245,12 @@ helpers in `test/support` are left to the implementor.
 - A static alias map whose value is a dependency function is rejected
 - Two different static keys of one alternative exposed under the same
   `deps` key are rejected when the rule is registered, with an error kind
-  that calls out the shadowing when an alias shadows the exposed form of
+  that calls out the shadowing when an alias shadows the written form of
   another dependency
 - The same static key listed twice in one alternative is accepted and
   demanded once...
   - ...in two forms (`:a` and `{__MODULE__, :a, %{}}`, or `:a` and
-    `{:default, :a, %{}}` in `:default`)
+    `{:default, :a, %{}}` in `:default`), and exposed under each form
   - ...under the same alias in two alias maps
 - Two alternatives of one rule may use the same alias for different keys
 - Two alternatives of one rule may declare different dependency lists
@@ -1335,13 +1338,13 @@ helpers in `test/support` are left to the implementor.
   - ...holds every dependency of the alternative, static and dynamic
   - ...exposes an aliased dependency under its alias, whatever the term
     used as alias
-  - ...exposes a dependency without alias under its shortest form...
-    - ...`name` for the same namespace and empty params
+  - ...exposes a dependency without alias under its written form...
+    - ...`name`, `{name, %{}}` or `{ns, name, %{}}` for the same
+      namespace and empty params
     - ...`{name, params}` for the same namespace
     - ...`{ns, name, params}` for another namespace
-    - ...`:account` for `{__MODULE__, :account, %{}}` declared in
-      `__MODULE__`
-    - ...`:account` for `{:account, %{}}`
+    - ...`{__MODULE__, :account, %{}}` declared in `__MODULE__`
+    - ...`{:account, %{}}`
   - ...is `%{}` for an alternative without dependencies
 - The same real key under two aliases of one alternative is computed once
   and exposed under both aliases
@@ -1450,8 +1453,8 @@ helpers in `test/support` are left to the implementor.
 - The keys a dependency function returns...
   - ...are demanded before the entries to its right
   - ...as an alias map are exposed in `deps` under their aliases
-  - ...as a list are exposed under their shortest forms
-  - ...as a single key are exposed under its shortest form
+  - ...as a list are exposed under their written forms
+  - ...as a single key are exposed under its written form
   - ...as a list are demanded in list order: the first failed key fails
     the alternative, and the keys after it are not demanded
   - ...as an alias map are demanded in ordered-iterator order, with the
@@ -1501,6 +1504,8 @@ helpers in `test/support` are left to the implementor.
     - ...from a static dependency
     - ...from another dependency function, e.g. two alias maps giving the
       same alias to the same key
+  - ...that is also another dependency of the alternative in another
+    written form is demanded once and exposed under both forms
   - ...naming an existing rule whose computation fails fails the
     alternative with `{:dep_failed, key}`
 

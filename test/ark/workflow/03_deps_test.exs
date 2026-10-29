@@ -101,7 +101,9 @@ defmodule Ark.Workflow.DepsTest do
         )
 
       wf = run!(wf, [:r])
-      assert %{a: :a, b: :b, x: :c, y: :d, e: :e, f: :f} == fetch!(wf, :r)
+
+      assert %{:a => :a, :b => :b, :x => :c, :y => :d, :e => :e, {:f, %{}} => :f} ==
+               fetch!(wf, :r)
     end
 
     test "exposes an aliased dependency under its alias, whatever the term used as alias" do
@@ -126,7 +128,7 @@ defmodule Ark.Workflow.DepsTest do
       assert expected == fetch!(wf, :dynamic)
     end
 
-    test "exposes a dependency without alias as name for the same namespace and empty params" do
+    test "exposes a dependency without alias as name, {name, %{}} or {ns, name, %{}} for the same namespace and empty params" do
       wf =
         Workflow.new()
         |> Workflow.add_rule(:a, const_rule(1))
@@ -136,8 +138,8 @@ defmodule Ark.Workflow.DepsTest do
 
       wf = run!(wf, [:r, :r2, :r3])
       assert %{a: 1} == fetch!(wf, :r)
-      assert %{a: 1} == fetch!(wf, :r2)
-      assert %{a: 1} == fetch!(wf, :r3)
+      assert %{{:a, %{}} => 1} == fetch!(wf, :r2)
+      assert %{{:default, :a, %{}} => 1} == fetch!(wf, :r3)
     end
 
     test "exposes a dependency without alias as {name, params} for the same namespace" do
@@ -171,7 +173,7 @@ defmodule Ark.Workflow.DepsTest do
                fetch!(wf, {NsB, :r, %{}})
     end
 
-    test "exposes :account for {__MODULE__, :account, %{}} declared in __MODULE__" do
+    test "exposes {__MODULE__, :account, %{}} declared in __MODULE__ as written" do
       wf =
         Workflow.new()
         |> Workflow.add_rule({__MODULE__, :account}, const_rule(:acc))
@@ -181,17 +183,17 @@ defmodule Ark.Workflow.DepsTest do
         )
 
       wf = run!(wf, [{__MODULE__, :r, %{}}])
-      assert %{account: :acc} == fetch!(wf, {__MODULE__, :r, %{}})
+      assert %{{__MODULE__, :account, %{}} => :acc} == fetch!(wf, {__MODULE__, :r, %{}})
     end
 
-    test "exposes :account for {:account, %{}}" do
+    test "exposes {:account, %{}} as written" do
       wf =
         Workflow.new()
         |> Workflow.add_rule({NsA, :account}, const_rule(:acc))
         |> Workflow.add_rule({NsA, :r}, rule([{:account, %{}}], deps_body()))
 
       wf = run!(wf, [{NsA, :r, %{}}])
-      assert %{account: :acc} == fetch!(wf, {NsA, :r, %{}})
+      assert %{{:account, %{}} => :acc} == fetch!(wf, {NsA, :r, %{}})
     end
 
     test "is %{} for an alternative without dependencies" do
