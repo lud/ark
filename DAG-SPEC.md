@@ -938,8 +938,8 @@ structs, so `Exception.message/1` formats them for logs:
 
   An exposure is `{exposed_as, key, :alias | :key}`: the `deps` key, the
   full key exposed under it, and whether `exposed_as` is an alias or the
-  written form of the key. The first exposure of a shadowing comes before
-  the second in the alternative.
+  written form of the key. The two exposures of a shadowing are in no
+  particular order.
 
   Building the graph, raised by `add_rule` and `add_ns`:
 
