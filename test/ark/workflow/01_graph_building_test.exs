@@ -373,11 +373,11 @@ defmodule Ark.Workflow.GraphBuildingTest do
 
   describe "a static dependency" do
     test "naming a rule that is not registered makes run return a graph error before calling any user code" do
-      {pid, body} = mock_fun(0, ok_body(1))
+      {pid, never} = mock_never(ok_body(1))
 
       wf =
         Workflow.new()
-        |> Workflow.add_rule(:first, rule([], body))
+        |> Workflow.add_rule(:first, rule([], never))
         |> Workflow.add_rule(:a, rule([:missing], ok_body(1)))
 
       assert {:error, %GraphError{}, wf2} = Workflow.run(wf, [:first, :a])
@@ -387,11 +387,11 @@ defmodule Ark.Workflow.GraphBuildingTest do
     end
 
     test "naming a rule that is not registered is a graph error even when no target demands it" do
-      {pid, body} = mock_fun(0, ok_body(1))
+      {pid, never} = mock_never(ok_body(1))
 
       wf =
         Workflow.new()
-        |> Workflow.add_rule(:first, rule([], body))
+        |> Workflow.add_rule(:first, rule([], never))
         |> Workflow.add_rule(:other, rule([{NsA, :missing, %{}}], ok_body(1)))
 
       assert {:error, %GraphError{}, _} = Workflow.run(wf, [:first])

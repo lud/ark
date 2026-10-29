@@ -511,13 +511,13 @@ defmodule Ark.Workflow.DumpLoadTest do
     end
 
     test "are not applied to failure records" do
-      {pid, fun} = mock_fun(0, & &1)
+      {pid, never} = mock_never(& &1)
 
       graph =
         Workflow.add_rule(Workflow.new(), :a, %{
           alts: [default: %{deps: [], body: error_body(:x)}],
-          dump: fun,
-          load: fun
+          dump: never,
+          load: never
         })
 
       {:error, %ComputationError{}, wf} = Workflow.run(graph, [:a])

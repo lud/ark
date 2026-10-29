@@ -198,8 +198,8 @@ defmodule Ark.Workflow.KeysAndRunTest do
 
   describe "run returns a graph error, without calling user code" do
     setup do
-      {pid, body} = mock_fun(0, ok_body(1))
-      wf = Workflow.add_rule(Workflow.new(), :first, rule([], body))
+      {pid, never} = mock_never(ok_body(1))
+      wf = Workflow.add_rule(Workflow.new(), :first, rule([], never))
       %{pid: pid, wf: wf}
     end
 
@@ -317,8 +317,8 @@ defmodule Ark.Workflow.KeysAndRunTest do
     end
 
     test "with an empty target list returns {:ok, workflow} without calling user code" do
-      {pid, body} = mock_fun(0, ok_body(1))
-      wf = Workflow.add_rule(Workflow.new(), :a, rule([], body))
+      {pid, never} = mock_never(ok_body(1))
+      wf = Workflow.add_rule(Workflow.new(), :a, rule([], never))
 
       assert {:ok, wf} = Workflow.run(wf, [])
       assert :error == Workflow.fetch(wf, :a)
@@ -348,12 +348,12 @@ defmodule Ark.Workflow.KeysAndRunTest do
     end
 
     test "does not continue the targets of a previous interrupted run" do
-      {pid, body} = mock_fun(0, ok_body(1))
+      {pid, never} = mock_never(ok_body(1))
 
       wf =
         Workflow.new()
         |> Workflow.add_rule(:a, failing_rule())
-        |> Workflow.add_rule(:b, rule([], body))
+        |> Workflow.add_rule(:b, rule([], never))
         |> Workflow.add_rule(:c, const_rule(:vc))
 
       assert {:error, %ComputationError{}, wf} = Workflow.run(wf, [:a, :b])

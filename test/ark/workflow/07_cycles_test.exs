@@ -40,13 +40,13 @@ defmodule Ark.Workflow.CyclesTest do
   end
 
   test "a static dependency chain that loops back to a key in progress makes run stop the same way" do
-    {pid, body} = mock_fun(0, ok_body(1))
+    {pid, never} = mock_never(ok_body(1))
 
     wf =
       Workflow.new()
-      |> Workflow.add_rule(:a, rule([:b], body))
-      |> Workflow.add_rule(:b, rule([:c], body))
-      |> Workflow.add_rule(:c, rule([:a], body))
+      |> Workflow.add_rule(:a, rule([:b], never))
+      |> Workflow.add_rule(:b, rule([:c], never))
+      |> Workflow.add_rule(:c, rule([:a], never))
 
     {e, wf} = assert_cycle(wf, [:a])
 
