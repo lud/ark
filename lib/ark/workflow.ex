@@ -64,11 +64,7 @@ defmodule Ark.Workflow do
     {ns, name} = parse_identity(identity, wf.ns)
 
     if is_map_key(wf.rules, {ns, name}) do
-      graph_error!(
-        :duplicate_rule,
-        "rule #{format_identity({ns, name})} is already registered",
-        key: {ns, name}
-      )
+      graph_error!({:duplicate_rule, {ns, name}}, rule: {ns, name})
     end
 
     %{wf | rules: Map.put(wf.rules, {ns, name}, parse_rule(rule, ns, {ns, name}))}
@@ -76,7 +72,7 @@ defmodule Ark.Workflow do
 
   def add_ns(%__MODULE__{} = wf, ns, callback) when is_function(callback, 1) do
     if !valid_name?(ns) do
-      graph_error!(:invalid_namespace, "invalid namespace #{inspect(ns)}", value: ns)
+      graph_error!({:invalid_namespace, ns}, [])
     end
 
     case callback.(%{wf | ns: ns}) do
@@ -84,35 +80,23 @@ defmodule Ark.Workflow do
         %{inner | ns: wf.ns}
 
       other ->
-        graph_error!(
-          :invalid_namespace_callback,
-          "add_ns callback must return a workflow, got: #{inspect(other)}",
-          value: other
-        )
+        graph_error!({:bad_return, :add_ns, callback, other, :not_a_graph}, [])
     end
   end
 
-  defp parse_identity(name, ns) when is_atom(name) do
-    parse_identity({ns, name}, ns)
-  end
+  defp parse_identity(identity, current_ns) do
+    {ns, name} =
+      case identity do
+        {ns, name} -> {ns, name}
+        name when is_atom(name) -> {current_ns, name}
+        _ -> {nil, nil}
+      end
 
-  defp parse_identity({ns, name}, _) do
     if valid_name?(ns) and valid_name?(name) do
       {ns, name}
     else
-      invalid_identity!({ns, name})
+      graph_error!({:invalid_identity, identity}, [])
     end
-  end
-
-  defp parse_identity(other, _) do
-    invalid_identity!(other)
-  end
-
-  @spec invalid_identity!(term) :: no_return
-  defp invalid_identity!(identity) do
-    graph_error!(:invalid_rule, "invalid rule identity #{inspect(identity)}",
-      value: identity
-    )
   end
 
   defp valid_name?(term) do
@@ -120,12 +104,12 @@ defmodule Ark.Workflow do
   end
 
   defp parse_rule(rule, ns, identity) when is_map(rule) do
-    check_keys!(rule, @rule_keys, "rule", identity)
+    check_keys!(rule, @rule_keys, [], identity)
 
     alts =
       case rule do
         %{alts: alts} -> parse_alts(alts, ns, identity)
-        _ -> invalid_rule!(identity, "missing :alts", nil)
+        _ -> invalid_rule!(identity, :missing_option, [:alts])
       end
 
     %{
@@ -136,25 +120,27 @@ defmodule Ark.Workflow do
   end
 
   defp parse_rule(rule, _ns, identity) do
-    invalid_rule!(identity, "expected a map", rule)
+    invalid_rule!(identity, :invalid_value, [], rule, "a map")
   end
 
-  defp check_keys!(map, allowed, what, identity) do
+  defp check_keys!(map, allowed, path, identity) do
     case Map.keys(map) -- allowed do
-      [] ->
-        :ok
-
-      unknown ->
-        invalid_rule!(identity, "unknown #{what} keys: #{inspect(unknown)}", unknown)
+      [] -> :ok
+      [key | _] -> invalid_rule!(identity, :unknown_option, path ++ [key])
     end
   end
 
-  @spec invalid_rule!(term, String.t(), term) :: no_return
-  defp invalid_rule!(identity, reason, value) do
-    graph_error!(:invalid_rule, "invalid rule #{inspect(identity)}: #{reason}",
-      key: identity,
-      value: value
-    )
+  @spec invalid_rule!(term, atom, list, term, term) :: no_return
+  defp invalid_rule!(identity, kind, path, value \\ nil, reason \\ nil) do
+    error = %Ark.Opts.Error{kind: kind, path: path, value: value, reason: reason}
+
+    alternative =
+      case path do
+        [:alts, name | _] -> name
+        _ -> nil
+      end
+
+    graph_error!({:invalid_rule, error}, rule: identity, alternative: alternative)
   end
 
   defp parse_codec(rule, field, identity) do
@@ -165,8 +151,10 @@ defmodule Ark.Workflow do
         else
           invalid_rule!(
             identity,
-            "#{inspect(field)} must be a function of arity 1 or a tuple",
-            fun
+            :invalid_value,
+            [field],
+            fun,
+            "a function of arity 1 or a {module, function, args} tuple"
           )
         end
 
@@ -190,134 +178,134 @@ defmodule Ark.Workflow do
   defp parse_alts([_ | _] = alts, ns, identity) do
     parsed =
       Enum.map(alts, fn
-        {name, alt} when is_map(alt) ->
+        {name, alt} ->
           if !valid_name?(name) do
-            invalid_rule!(identity, "invalid alternative name #{inspect(name)}", name)
+            invalid_rule!(
+              identity,
+              :invalid_value,
+              [:alts],
+              name,
+              "alternative names as atoms other than nil, true and false"
+            )
+          end
+
+          if !is_map(alt) do
+            invalid_rule!(identity, :invalid_value, [:alts, name], alt, "a map")
           end
 
           {name, parse_alt(name, alt, ns, identity)}
 
         other ->
-          invalid_rule!(identity, "invalid alternative #{inspect(other)}", other)
+          invalid_rule!(identity, :invalid_value, [:alts], other, "a keyword list")
       end)
 
     names = Enum.map(parsed, &elem(&1, 0))
 
-    if length(names) != length(Enum.uniq(names)) do
-      invalid_rule!(identity, "duplicate alternative names in #{inspect(names)}", names)
+    case names -- Enum.uniq(names) do
+      [] -> parsed
+      [name | _] -> invalid_rule!(identity, :duplicate_option, [:alts, name])
     end
-
-    parsed
   end
 
   defp parse_alts(other, _ns, identity) do
-    invalid_rule!(identity, ":alts must be a non-empty keyword list", other)
+    invalid_rule!(identity, :invalid_value, [:alts], other, "a non-empty keyword list")
   end
 
   defp parse_alt(name, alt, ns, identity) do
-    check_keys!(alt, @alt_keys, "alternative #{inspect(name)}", identity)
+    check_keys!(alt, @alt_keys, [:alts, name], identity)
 
-    with {:ok, deps} <- Map.fetch(alt, :deps),
-         {:ok, body} <- Map.fetch(alt, :body) do
-      if not is_list(deps) do
-        invalid_rule!(
-          identity,
-          "alternative #{inspect(name)}: :deps must be a list",
-          deps
-        )
-      end
-
-      if !callable?(body, 3) do
-        invalid_rule!(
-          identity,
-          "alternative #{inspect(name)}: :body must be a function of arity 3 or a tuple",
-          body
-        )
-      end
-
-      entries = Enum.map(deps, &parse_dep(&1, ns, identity, name))
-      exposed = check_shadowing!(entries, identity, name)
-      %{deps: entries, body: body, exposed: exposed}
-    else
-      :error ->
-        invalid_rule!(identity, "alternative #{inspect(name)} needs :deps and :body", alt)
+    for field <- @alt_keys, not is_map_key(alt, field) do
+      invalid_rule!(identity, :missing_option, [:alts, name, field])
     end
+
+    %{deps: deps, body: body} = alt
+
+    if not is_list(deps) do
+      invalid_rule!(identity, :invalid_value, [:alts, name, :deps], deps, "a list")
+    end
+
+    if !callable?(body, 3) do
+      invalid_rule!(
+        identity,
+        :invalid_value,
+        [:alts, name, :body],
+        body,
+        "a function of arity 3 or a {module, function, args} tuple"
+      )
+    end
+
+    entries =
+      deps
+      |> Enum.with_index()
+      |> Enum.map(fn {dep, index} -> parse_dep(dep, ns, identity, name, index) end)
+
+    exposed = check_shadowing!(entries, identity, name)
+    %{deps: entries, body: body, exposed: exposed}
   end
 
-  defp parse_dep(fun, _ns, identity, alt) when is_function(fun) do
+  defp parse_dep(fun, _ns, identity, alt, index) when is_function(fun) do
     if is_function(fun, 3) do
       {:fun, fun}
     else
-      invalid_dep!(identity, alt, fun)
+      invalid_rule!(
+        identity,
+        :invalid_value,
+        [:alts, alt, :deps, index],
+        fun,
+        "a function of arity 3"
+      )
     end
   end
 
-  defp parse_dep({m, f, args} = mfa, _ns, _identity, _alt)
+  defp parse_dep({m, f, args} = mfa, _ns, _identity, _alt, _index)
        when is_atom(m) and is_atom(f) and is_list(args) do
     {:fun, mfa}
   end
 
-  defp parse_dep(map, ns, identity, alt) when is_map(map) do
+  defp parse_dep(map, ns, identity, alt, _index) when is_map(map) do
     {:alias,
      Enum.map(ordered_pairs(map), fn {a, k} ->
        {a, parse_dep_key(k, ns, identity, alt)}
      end)}
   end
 
-  defp parse_dep(term, ns, identity, alt) do
+  defp parse_dep(term, ns, identity, alt, _index) do
     {:key, term, parse_dep_key(term, ns, identity, alt)}
   end
 
   defp parse_dep_key(term, ns, identity, alt) do
     case parse_key(term, ns) do
       {:ok, key} -> key
-      :error -> invalid_dep!(identity, alt, term)
+      {:error, reason} -> graph_error!(reason, rule: identity, alternative: alt)
     end
   end
 
-  @spec invalid_dep!(term, atom, term) :: no_return
-  defp invalid_dep!(identity, alt, term) do
-    graph_error!(
-      :invalid_dependency,
-      "invalid dependency #{inspect(term)} in alternative #{inspect(alt)} of #{format_identity(identity)}",
-      key: identity,
-      alternative: alt,
-      value: term
-    )
-  end
-
   defp check_shadowing!(entries, identity, alt) do
-    Enum.reduce(entries, %{}, fn
-      {:fun, _}, acc ->
-        acc
+    exposures =
+      Enum.flat_map(entries, fn
+        {:fun, _} -> []
+        {:key, term, key} -> [{term, key, :key}]
+        {:alias, pairs} -> Enum.map(pairs, fn {a, key} -> {a, key, :alias} end)
+      end)
 
-      {:key, term, key}, acc ->
-        expose!(acc, term, key, identity, alt)
-
-      {:alias, pairs}, acc ->
-        Enum.reduce(pairs, acc, fn {a, key}, acc ->
-          expose!(acc, a, key, identity, alt)
-        end)
+    Enum.reduce(exposures, %{}, fn exposure, acc ->
+      case expose(acc, exposure) do
+        {:ok, acc} -> acc
+        {:error, reason} -> graph_error!(reason, rule: identity, alternative: alt)
+      end
     end)
   end
 
-  defp expose!(acc, exposed, key, identity, alt) do
+  defp expose(acc, {exposed, key, source} = exposure) do
     case acc do
-      %{^exposed => ^key} ->
-        acc
+      %{^exposed => {^key, _}} ->
+        {:ok, acc}
 
-      %{^exposed => other} ->
-        graph_error!(
-          :shadowing,
-          "keys #{format_key(other)} and #{format_key(key)} are both exposed as " <>
-            "#{inspect(exposed)} in alternative #{inspect(alt)} of #{format_identity(identity)}",
-          key: key,
-          alternative: alt,
-          value: exposed
-        )
+      %{^exposed => {other, other_source}} ->
+        {:error, {:shadowing, {exposed, other, other_source}, exposure}}
 
       _ ->
-        Map.put(acc, exposed, key)
+        {:ok, Map.put(acc, exposed, {key, source})}
     end
   end
 
@@ -338,28 +326,28 @@ defmodule Ark.Workflow do
     if valid_name?(name) do
       {:ok, {ns, name, %{}}}
     else
-      :error
+      {:error, {:invalid_key, name}}
     end
   end
 
-  defp parse_key({name, params}, ns) do
-    if valid_name?(name) and valid_params?(params) do
-      {:ok, {ns, name, params}}
-    else
-      :error
+  defp parse_key({name, params} = given, ns) do
+    cond do
+      !valid_name?(name) -> {:error, {:invalid_key, given}}
+      !valid_params?(params) -> {:error, {:invalid_params, given}}
+      true -> {:ok, {ns, name, params}}
     end
   end
 
-  defp parse_key({kns, name, params}, _ns) do
-    if valid_name?(kns) and valid_name?(name) and valid_params?(params) do
-      {:ok, {kns, name, params}}
-    else
-      :error
+  defp parse_key({kns, name, params} = given, _ns) do
+    cond do
+      !(valid_name?(kns) and valid_name?(name)) -> {:error, {:invalid_key, given}}
+      !valid_params?(params) -> {:error, {:invalid_params, given}}
+      true -> {:ok, {kns, name, params}}
     end
   end
 
-  defp parse_key(_, _ns) do
-    :error
+  defp parse_key(given, _ns) do
+    {:error, {:invalid_key, given}}
   end
 
   defp valid_params?(params) when is_map(params) do
@@ -426,26 +414,12 @@ defmodule Ark.Workflow do
         if is_map_key(wf.rules, {ns, name}) do
           {:ok, full}
         else
-          {:error, unknown_rule(full, nil)}
+          {:error, %GraphError{reason: {:unknown_rule, full}}}
         end
 
-      :error ->
-        {:error,
-         %GraphError{
-           kind: :invalid_key,
-           message: "invalid key #{inspect(key)}",
-           value: key
-         }}
+      {:error, reason} ->
+        {:error, %GraphError{reason: reason}}
     end
-  end
-
-  defp unknown_rule({ns, name, _} = key, alt) do
-    %GraphError{
-      kind: :unknown_rule,
-      message: "no rule registered for #{format_identity({ns, name})}",
-      key: key,
-      alternative: alt
-    }
   end
 
   # -- Running ---------------------------------------------------------------
@@ -518,14 +492,7 @@ defmodule Ark.Workflow do
   defp missing_rule(wf, {ns, name, _} = key, identity, alt) do
     if !is_map_key(wf.rules, {ns, name}) do
       {:error,
-       %GraphError{
-         kind: :unknown_rule,
-         message:
-           "alternative #{inspect(alt)} of #{format_identity(identity)} depends on #{format_key(key)}, " <>
-             "but no rule #{format_identity({ns, name})} is registered",
-         key: key,
-         alternative: alt
-       }}
+       %GraphError{rule: identity, alternative: alt, reason: {:unknown_rule, key}}}
     end
   end
 
@@ -625,7 +592,7 @@ defmodule Ark.Workflow do
           computation_record(
             :error,
             "no rule registered for #{format_key(key)}",
-            unknown_rule(key, nil)
+            %GraphError{reason: {:unknown_rule, key}}
           )
 
         alt_failed(frame, record, st)
@@ -697,54 +664,40 @@ defmodule Ark.Workflow do
     {ns, _, params} = frame.key
 
     case call_user(fun, [params, cur.deps, st.context], :deps, frame, cur, st) do
-      {:ok, result} -> dynamic_deps(result, ns, cur, frame, st)
+      {:ok, result} -> dynamic_deps(result, ns, {fun, result, cur, frame, st})
       {:raised, record} -> {:error, record}
     end
   end
 
-  defp dynamic_deps(result, ns, cur, frame, st) do
-    pairs =
-      parse_dynamic(result, ns, {result, cur, frame, st})
+  defp dynamic_deps(result, ns, {_, _, cur, _, st} = ctx) do
+    exposures = parse_dynamic(result, ns, ctx)
 
-    Enum.each(pairs, fn {_, {kns, name, _} = key} ->
+    Enum.each(exposures, fn {_, {kns, name, _} = key, _} ->
       if !is_map_key(st.rules, {kns, name}) do
-        message =
-          "dependency #{format_key(key)} has no registered rule" <> ok_hint(result)
-
-        dynamic_error(:unknown_rule, message, result, cur, frame, st)
+        dynamic_error({:unknown_rule, key}, ctx)
       end
     end)
 
     exposed =
-      Enum.reduce(pairs, cur.exposed, fn {exposed, key}, acc ->
-        case acc do
-          %{^exposed => ^key} ->
-            acc
-
-          %{^exposed => other} ->
-            message =
-              "keys #{format_key(other)} and #{format_key(key)} are both exposed as " <>
-                "#{inspect(exposed)} in alternative #{inspect(cur.name)} of #{format_key(frame.key)}"
-
-            dynamic_error(:shadowing, message, result, cur, frame, st)
-
-          _ ->
-            Map.put(acc, exposed, key)
+      Enum.reduce(exposures, cur.exposed, fn exposure, acc ->
+        case expose(acc, exposure) do
+          {:ok, acc} -> acc
+          {:error, reason} -> dynamic_error(reason, ctx)
         end
       end)
 
-    {:ok, pairs, exposed}
+    {:ok, Enum.map(exposures, fn {exposed, key, _} -> {exposed, key} end), exposed}
   end
 
   defp parse_dynamic(result, ns, ctx) when is_map(result) do
     result
     |> ordered_pairs()
-    |> Enum.map(fn {alias, term} -> {alias, dynamic_key(term, ns, ctx)} end)
+    |> Enum.map(fn {alias, term} -> {alias, dynamic_key(term, ns, ctx), :alias} end)
   end
 
   defp parse_dynamic(result, ns, ctx) when is_list(result) do
     Enum.map(result, fn term ->
-      {term, dynamic_key(term, ns, ctx)}
+      {term, dynamic_key(term, ns, ctx), :key}
     end)
   end
 
@@ -754,41 +707,18 @@ defmodule Ark.Workflow do
 
   defp dynamic_key(term, ns, ctx) do
     case parse_key(term, ns) do
-      {:ok, key} ->
-        key
-
-      :error ->
-        {result, cur, frame, st} = ctx
-
-        dynamic_error(
-          :invalid_dependency,
-          "a dependency function returned an invalid dependency: #{inspect(term)}" <>
-            ok_hint(result),
-          result,
-          cur,
-          frame,
-          st
-        )
+      {:ok, key} -> key
+      {:error, reason} -> dynamic_error(reason, ctx)
     end
   end
 
-  defp ok_hint({:ok, _}) do
-    ". Dependency functions return keys directly, not an :ok tuple"
-  end
-
-  defp ok_hint(_) do
-    ""
-  end
-
-  @spec dynamic_error(atom, String.t(), term, map, map, map) :: no_return
-  defp dynamic_error(kind, message, result, cur, frame, st) do
+  @spec dynamic_error(term, tuple) :: no_return
+  defp dynamic_error(reason, {fun, result, cur, frame, st}) do
     error = %GraphError{
-      kind: kind,
-      message:
-        "#{message} (alternative #{inspect(cur.name)} of #{format_key(frame.key)})",
+      rule: rule_of(frame.key),
       key: frame.key,
       alternative: cur.name,
-      value: result
+      reason: {:bad_return, :deps, fun, result, reason}
     }
 
     throw({:graph_error, error, st})
@@ -798,11 +728,15 @@ defmodule Ark.Workflow do
     stack = [frame | st.stack] |> Enum.map(& &1.key) |> :lists.reverse()
 
     %GraphError{
-      kind: :cycle,
-      message: "dependency cycle on #{format_key(key)}",
-      key: key,
-      stack: stack
+      rule: rule_of(frame.key),
+      key: frame.key,
+      alternative: frame.cur.name,
+      reason: {:cycle, key, stack}
     }
+  end
+
+  defp rule_of({ns, name, _}) do
+    {ns, name}
   end
 
   # -- Calling user code -----------------------------------------------------
@@ -964,8 +898,8 @@ defmodule Ark.Workflow do
     inspect(identity)
   end
 
-  @spec graph_error!(atom, String.t(), keyword) :: no_return
-  defp graph_error!(kind, message, fields) do
-    raise struct!(GraphError, [kind: kind, message: message] ++ fields)
+  @spec graph_error!(term, keyword) :: no_return
+  defp graph_error!(reason, fields) do
+    raise struct!(GraphError, [reason: reason] ++ fields)
   end
 end
