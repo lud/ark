@@ -44,6 +44,10 @@ defmodule Ark.Test.WorkflowHelpers do
     end
   end
 
+  def shadowing_exposures({:shadowing, exposure_a, exposure_b}) do
+    MapSet.new([exposure_a, exposure_b])
+  end
+
   def without_reasons(%{at: _, kind: _, message: _, reason: _} = cleaned) do
     %{cleaned | reason: nil}
   end

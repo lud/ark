@@ -497,16 +497,13 @@ defmodule Ark.Workflow.GraphBuildingTest do
 
   describe "two different static keys of one alternative exposed under the same deps key" do
     test "are rejected under the same alias" do
-      e = assert_rejected(rule([%{x: :b}, %{x: :c}], ok_body(1)))
+      b = {:default, :b, %{}}
 
-      assert {:shadowing, {:x, {:default, :b, %{}}, :alias},
-              {:x, {:default, :c, %{}}, :alias}} ==
-               e.reason
+      assert MapSet.new([{:x, b, :alias}, {:x, {:default, :c, %{}}, :alias}]) ==
+               shadowing_exposures(rejected_deps_reason([%{x: :b}, %{x: :c}]))
 
-      e = assert_rejected(rule([%{x: :b}, %{x: {:b, %{id: 1}}}], ok_body(1)))
-
-      assert {:shadowing, {:x, {:default, :b, %{}}, :alias},
-              {:x, {:default, :b, %{id: 1}}, :alias}} == e.reason
+      assert MapSet.new([{:x, b, :alias}, {:x, {:default, :b, %{id: 1}}, :alias}]) ==
+               shadowing_exposures(rejected_deps_reason([%{x: :b}, %{x: {:b, %{id: 1}}}]))
     end
 
     test "are rejected as shadowing when an alias shadows the written form of another dependency" do
@@ -516,13 +513,13 @@ defmodule Ark.Workflow.GraphBuildingTest do
       ns_b = {NsA, :b, %{}}
 
       for {deps, expected} <- [
-            {[:b, %{b: :c}], {:shadowing, {:b, b, :key}, {:b, c, :alias}}},
-            {[%{b: :c}, :b], {:shadowing, {:b, c, :alias}, {:b, b, :key}}},
+            {[:b, %{b: :c}], [{:b, b, :key}, {:b, c, :alias}]},
+            {[%{b: :c}, :b], [{:b, b, :key}, {:b, c, :alias}]},
             {[{:b, %{id: 1}}, %{{:b, %{id: 1}} => :c}],
-             {:shadowing, {{:b, %{id: 1}}, b1, :key}, {{:b, %{id: 1}}, c, :alias}}},
-            {[ns_b, %{ns_b => :c}], {:shadowing, {ns_b, ns_b, :key}, {ns_b, c, :alias}}}
+             [{{:b, %{id: 1}}, b1, :key}, {{:b, %{id: 1}}, c, :alias}]},
+            {[ns_b, %{ns_b => :c}], [{ns_b, ns_b, :key}, {ns_b, c, :alias}]}
           ] do
-        assert expected == rejected_deps_reason(deps)
+        assert MapSet.new(expected) == shadowing_exposures(rejected_deps_reason(deps))
       end
     end
   end

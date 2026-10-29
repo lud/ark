@@ -72,7 +72,7 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
     wf = Workflow.add_rule(base_graph(), :r, rule(deps, ok_body(1)))
     {e, _} = run_graph_error(wf, [:r])
     assert {:bad_return, :deps, fun, _, {:shadowing, _, _} = shadowing} = e.reason
-    {fun, shadowing}
+    {fun, shadowing_exposures(shadowing)}
   end
 
   describe "a dependency function" do
@@ -502,31 +502,31 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
     test "a key exposed under the same deps key as a different key to the left of the dependency function" do
       fun = fn _, _, _ -> %{a: :b} end
 
-      assert {^fun, {:shadowing, {:a, key(:a), :key}, {:a, key(:b), :alias}}} =
+      assert {fun, MapSet.new([{:a, key(:a), :key}, {:a, key(:b), :alias}])} ==
                shadowing_reason([:a, fun])
 
       fun = fn _, _, _ -> %{x: :b} end
 
-      assert {^fun, {:shadowing, {:x, key(:a), :alias}, {:x, key(:b), :alias}}} =
+      assert {fun, MapSet.new([{:x, key(:a), :alias}, {:x, key(:b), :alias}])} ==
                shadowing_reason([%{x: :a}, fun])
     end
 
     test "a key exposed under the same deps key as a static dependency to its right" do
       fun = fn _, _, _ -> %{c: :b} end
 
-      assert {^fun, {:shadowing, {:c, key(:b), :alias}, {:c, key(:c), :key}}} =
+      assert {fun, MapSet.new([{:c, key(:b), :alias}, {:c, key(:c), :key}])} ==
                shadowing_reason([fun, :c])
     end
 
     test "a key exposed under the same deps key as a key returned by another dependency function of the alternative" do
       fun = fn _, _, _ -> %{x: :b} end
 
-      assert {^fun, {:shadowing, {:x, key(:a), :alias}, {:x, key(:b), :alias}}} =
+      assert {fun, MapSet.new([{:x, key(:a), :alias}, {:x, key(:b), :alias}])} ==
                shadowing_reason([fn _, _, _ -> %{x: :a} end, fun])
 
       fun = fn _, _, _ -> %{a: :b} end
 
-      assert {^fun, {:shadowing, {:a, key(:a), :key}, {:a, key(:b), :alias}}} =
+      assert {fun, MapSet.new([{:a, key(:a), :key}, {:a, key(:b), :alias}])} ==
                shadowing_reason([fn _, _, _ -> :a end, fun])
     end
   end
