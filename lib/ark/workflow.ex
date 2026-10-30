@@ -494,12 +494,17 @@ defmodule Ark.Workflow do
   end
 
   defp pull_deps(arm(deps: [_ | _] = deps, acc: acc) = arm, store, key, wf) do
-    {remaining_deps, acc} = do_pull_deps(deps, acc, store, key, wf)
-    arm = arm(arm, deps: remaining_deps, acc: acc)
+    case do_pull_deps(deps, acc, store, key, wf) do
+      {:ok, remaining_deps, acc} ->
+        arm = arm(arm, deps: remaining_deps, acc: acc)
 
-    case remaining_deps do
-      [] -> {:ready, arm}
-      _ -> {:needy, arm}
+        case remaining_deps do
+          [] -> {:ready, arm}
+          _ -> {:needy, arm}
+        end
+
+      {:error, :dep_failure, remaining_deps, acc} ->
+        {:error, :dep_failure, arm = arm(arm, deps: remaining_deps, acc: acc)}
     end
   end
 
@@ -510,10 +515,10 @@ defmodule Ark.Workflow do
         do_pull_deps(deps, acc, store, key, wf)
 
       %{^fk => {:failed, _} = err} ->
-        raise "found dep error: #{inspect(err)}"
+        {[dep | deps], acc}
 
       _ ->
-        {[dep | deps], acc}
+        {:ok, [dep | deps], acc}
     end
   end
 
@@ -578,7 +583,7 @@ defmodule Ark.Workflow do
   end
 
   defp do_pull_deps([], acc, _store, key, wf) do
-    {[], acc}
+    {:ok, [], acc}
   end
 
   #
