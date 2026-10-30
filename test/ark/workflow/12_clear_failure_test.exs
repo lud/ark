@@ -152,6 +152,39 @@ defmodule Ark.Workflow.ClearFailureTest do
       assert :via_c == fetch!(wf, :a)
     end
 
+    test "retries a cleared alternative placed between alternatives that keep their failure" do
+      log = start_log()
+      sw = switch()
+
+      wf =
+        Workflow.new()
+        |> Workflow.add_rule(:b, rule([], switch_body(sw, log, :b)))
+        |> Workflow.add_rule(:a, %{
+          alts: [
+            a1: %{deps: [], body: tracked(log, :a1, {:error, :x})},
+            a2: %{deps: [:b], body: tracked(log, :a2, {:ok, :a2})},
+            a3: %{deps: [], body: tracked(log, :a3, {:error, :y})}
+          ]
+        })
+
+      {:error, %ComputationError{}, wf} = Workflow.run(wf, [:a])
+      assert [:a1, :b, :a3] == logged(log)
+
+      {:ok, wf} = Workflow.clear_failure(wf, :b)
+      assert :error == Workflow.fetch(wf, :a)
+
+      assert {:ok, %{a1: {:computation_error, _}, a3: {:computation_error, _}} = attempts} =
+               Workflow.attempts(wf, :a)
+
+      assert 2 == map_size(attempts)
+
+      fix(sw)
+      wf = run!(wf, [:a])
+
+      assert [:a1, :b, :a3, :b, :a2] == logged(log)
+      assert :a2 == fetch!(wf, :a)
+    end
+
     test "keeps every recorded value" do
       wf =
         Workflow.new()
