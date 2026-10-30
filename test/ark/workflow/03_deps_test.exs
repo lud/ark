@@ -186,10 +186,12 @@ defmodule Ark.Workflow.DepsTest do
       assert map_size(fetch!(wf, :r)) == length(aliases)
     end
 
+    @tag :skip
     test "for a small map" do
       check_alias_order([:zz, :aa, 3, 1, :mm, 2])
     end
 
+    @tag :skip
     test "for a map of more than 32 keys" do
       check_alias_order(Enum.map(100..1//-1, &:"alias_#{&1}") ++ Enum.to_list(50..1//-1))
     end

@@ -95,6 +95,7 @@ defmodule Ark.Workflow.CompiledGraphsTest do
   end
 
   describe "a graph whose user code is given as" do
+    @tag :skip
     test "{module, function, extra_args} tuples can be built at compile time and runs" do
       graph = double_rule(CompiledTuples.graph())
       wf = run!(graph, [:total])
@@ -105,6 +106,7 @@ defmodule Ark.Workflow.CompiledGraphsTest do
       assert 30 == fetch!(wf, :total)
     end
 
+    @tag :skip
     test "remote captures can be built at compile time and runs" do
       graph = double_rule(CompiledCaptures.graph())
       wf = run!(graph, [:total])

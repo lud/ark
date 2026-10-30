@@ -24,7 +24,6 @@ defmodule Ark.Workflow.ContextTest do
     assert [[%{}, %{}, ^context]] = calls(pid)
   end
 
-  @tag :skip
   test "the context defaults to an empty map" do
     {pid, body} = mock_fun(1, ok_body(1))
     wf = Workflow.add_rule(Workflow.new(), :a, rule([], body))
@@ -76,7 +75,6 @@ defmodule Ark.Workflow.ContextTest do
     assert %{b: :vb} == fetch!(wf, {:a, %{id: 1}})
   end
 
-  @tag :skip
   test "changing the context between runs does not compute recorded keys again" do
     {pid, body} = mock_fun(1, ok_body(1))
     wf = Workflow.add_rule(Workflow.new(), :a, rule([], body))

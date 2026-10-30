@@ -129,7 +129,6 @@ defmodule Ark.Workflow.FailurePersistenceTest do
   end
 
   describe "a key with a value keeps it, and none of its alternatives is called again" do
-    @tag :skip
     test "on a later run of the same state" do
       {pid, body} = mock_fun(1, ok_body(1))
       wf = graph_with(:a, rule([], body))
