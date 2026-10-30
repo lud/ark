@@ -1,86 +1,3 @@
-defmodule Ark.Workflow.GraphBuildingTest.CompiledTuples do
-  alias Ark.Workflow
-
-  @graph Workflow.new()
-         |> Workflow.add_rule(:base, %{
-           alts: [default: %{deps: [], body: {__MODULE__, :base, [10]}}],
-           dump: {__MODULE__, :dump, []},
-           load: {__MODULE__, :load, []}
-         })
-         |> Workflow.add_rule(:total, %{
-           alts: [
-             default: %{
-               deps: [:base, {__MODULE__, :deps_of, [:base]}],
-               body: {__MODULE__, :total, []}
-             }
-           ]
-         })
-
-  def graph do
-    @graph
-  end
-
-  def base(_params, _deps, _ctx, n) do
-    {:ok, n}
-  end
-
-  def deps_of(_params, deps, _ctx, name) do
-    %{double: {:double, %{n: deps[name]}}}
-  end
-
-  def total(_params, deps, _ctx) do
-    {:ok, deps.base + deps.double}
-  end
-
-  def dump(value) do
-    value
-  end
-
-  def load(data) do
-    data
-  end
-end
-
-defmodule Ark.Workflow.GraphBuildingTest.CompiledCaptures do
-  alias Ark.Workflow
-
-  @graph Workflow.new()
-         |> Workflow.add_rule(:base, %{
-           alts: [default: %{deps: [], body: &__MODULE__.base/3}],
-           dump: &__MODULE__.dump/1,
-           load: &__MODULE__.load/1
-         })
-         |> Workflow.add_rule(:total, %{
-           alts: [
-             default: %{deps: [:base, &__MODULE__.deps_of/3], body: &__MODULE__.total/3}
-           ]
-         })
-
-  def graph do
-    @graph
-  end
-
-  def base(_params, _deps, _ctx) do
-    {:ok, 10}
-  end
-
-  def deps_of(_params, deps, _ctx) do
-    %{double: {:double, %{n: deps.base}}}
-  end
-
-  def total(_params, deps, _ctx) do
-    {:ok, deps.base + deps.double}
-  end
-
-  def dump(value) do
-    value
-  end
-
-  def load(data) do
-    data
-  end
-end
-
 defmodule Ark.Workflow.GraphBuildingTest.CompiledNs do
   alias Ark.Workflow
 
@@ -120,10 +37,7 @@ defmodule Ark.Workflow.GraphBuildingTest do
   import Ark.Test.WorkflowHelpers
 
   alias Ark.Workflow
-  alias Ark.Workflow.ComputationError
-  alias Ark.Workflow.GraphBuildingTest.CompiledCaptures
   alias Ark.Workflow.GraphBuildingTest.CompiledNs
-  alias Ark.Workflow.GraphBuildingTest.CompiledTuples
   alias Ark.Workflow.GraphError
 
   defmodule NsA do
@@ -133,10 +47,6 @@ defmodule Ark.Workflow.GraphBuildingTest do
   end
 
   defmodule Billing do
-  end
-
-  defp double_rule(wf) do
-    Workflow.add_rule(wf, :double, rule([], fn %{n: n}, _, _ -> {:ok, n * 2} end))
   end
 
   defp assert_rejected(rule_map) do
@@ -487,11 +397,11 @@ defmodule Ark.Workflow.GraphBuildingTest do
   end
 
   test "a static alias map whose value is a dependency function is rejected" do
-    for fun <- [fn _, _, _ -> :b end, &CompiledCaptures.deps_of/3] do
+    for fun <- [fn _, _, _ -> :b end, &CompiledNs.account/3] do
       assert {:invalid_key, fun} == rejected_dep_reason(%{x: fun})
     end
 
-    tuple = {CompiledTuples, :deps_of, [:base]}
+    tuple = {CompiledNs, :account, [:base]}
     assert {:invalid_params, tuple} == rejected_dep_reason(%{x: tuple})
   end
 
@@ -786,54 +696,6 @@ defmodule Ark.Workflow.GraphBuildingTest do
     assert {:entry, [:the_account]} == fetch!(wf, :entry)
   end
 
-  describe "a graph whose user code is given as" do
-    test "{module, function, extra_args} tuples can be built at compile time and runs" do
-      graph = double_rule(CompiledTuples.graph())
-      wf = run!(graph, [:total])
-      assert 30 == fetch!(wf, :total)
-
-      wf = roundtrip(wf, graph)
-      assert 10 == fetch!(wf, :base)
-      assert 30 == fetch!(wf, :total)
-    end
-
-    test "remote captures can be built at compile time and runs" do
-      graph = double_rule(CompiledCaptures.graph())
-      wf = run!(graph, [:total])
-      assert 30 == fetch!(wf, :total)
-
-      wf = roundtrip(wf, graph)
-      assert 10 == fetch!(wf, :base)
-      assert 30 == fetch!(wf, :total)
-    end
-
-    test "tuples or captures, built at runtime, runs like the compiled graph" do
-      runtime =
-        Workflow.new()
-        |> Workflow.add_rule(:base, %{
-          alts: [default: %{deps: [], body: &CompiledCaptures.base/3}],
-          dump: &CompiledCaptures.dump/1,
-          load: &CompiledCaptures.load/1
-        })
-        |> Workflow.add_rule(:total, %{
-          alts: [
-            default: %{
-              deps: [:base, {CompiledTuples, :deps_of, [:base]}],
-              body: {CompiledTuples, :total, []}
-            }
-          ]
-        })
-        |> double_rule()
-
-      runtime = run!(runtime, [:total])
-      compiled = CompiledTuples.graph() |> double_rule() |> run!([:total])
-
-      for key <- [:base, :total, {:double, %{n: 10}}] do
-        assert fetch!(compiled, key) == fetch!(runtime, key)
-      end
-    end
-  end
-
   describe "an anonymous function or a remote capture of the wrong arity is rejected when the rule is registered" do
     test "as a body or a dependency function (arity 3)" do
       for bad <- [fn -> :ok end, fn _ -> :ok end, fn _, _ -> :ok end, &String.upcase/1] do
@@ -847,7 +709,7 @@ defmodule Ark.Workflow.GraphBuildingTest do
             fn -> :ok end,
             fn _, _ -> :ok end,
             &String.upcase/2,
-            &CompiledCaptures.base/3
+            &CompiledNs.account/3
           ] do
         assert_invalid_rule(Map.put(const_rule(1), :dump, bad))
         assert_invalid_rule(Map.put(const_rule(1), :load, bad))
@@ -855,9 +717,9 @@ defmodule Ark.Workflow.GraphBuildingTest do
     end
 
     test "as a body, a tuple that is not {atom, atom, list} is rejected" do
-      assert_invalid_rule(rule([], {CompiledTuples, :base}))
-      assert_invalid_rule(rule([], {CompiledTuples, :base, 10}))
-      assert_invalid_rule(rule([], {"Elixir.CompiledTuples", :base, []}))
+      assert_invalid_rule(rule([], {CompiledNs, :account}))
+      assert_invalid_rule(rule([], {CompiledNs, :account, 10}))
+      assert_invalid_rule(rule([], {"Elixir.CompiledNs", :account, []}))
     end
   end
 
@@ -871,23 +733,5 @@ defmodule Ark.Workflow.GraphBuildingTest do
                dump: dump,
                load: dump
              })
-  end
-
-  test "a tuple or a capture naming a function that does not exist fails the alternative with kind :error when it is called" do
-    for body <- [
-          {__MODULE__.NotYet, :body, []},
-          Function.capture(__MODULE__.NotYet, :body, 3),
-          {__MODULE__, :not_a_function, [1]},
-          Function.capture(__MODULE__, :not_a_function, 3)
-        ] do
-      wf = Workflow.add_rule(Workflow.new(), :a, rule([], body))
-
-      assert {:error, %ComputationError{causes: [cause]}, _} = Workflow.run(wf, [:a])
-
-      assert %{key: {:default, :a, %{}}, alternative: :default, error: %{kind: :error}} =
-               cause
-
-      assert cause.error.message =~ "UndefinedFunctionError"
-    end
   end
 end

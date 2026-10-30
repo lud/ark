@@ -102,37 +102,6 @@ defmodule Ark.Workflow.KeysAndRunTest do
       verify(pid)
       assert [[^params, %{}, %{}]] = calls(pid)
     end
-
-    test "from a key returned by a dependency function" do
-      {pid, body} = mock_fun(1, ok_body(1))
-      params = %{"id" => 1, :opt => [1, 2.0], :s => %SomeStruct{id: 3}}
-
-      wf =
-        Workflow.new()
-        |> Workflow.add_rule(:a, rule([], body))
-        |> Workflow.add_rule(:r, rule([fn _, _, _ -> {:a, params} end], deps_body()))
-
-      _ = run!(wf, [:r])
-
-      verify(pid)
-      assert [[^params, %{}, %{}]] = calls(pid)
-    end
-  end
-
-  test "a body of a key demanded without params receives %{}" do
-    {pid, body} = mock_fun(3, ok_body(1))
-
-    wf =
-      Workflow.new()
-      |> Workflow.add_rule(:a, rule([], body))
-      |> Workflow.add_rule({NsA, :b}, rule([], body))
-      |> Workflow.add_rule(:c, rule([], body))
-      |> Workflow.add_rule(:r, rule([{NsA, :b, %{}}, fn _, _, _ -> :c end], deps_body()))
-
-    _ = run!(wf, [:a, :r])
-
-    verify(pid)
-    assert [[%{}, _, _], [%{}, _, _], [%{}, _, _]] = calls(pid)
   end
 
   describe "a rule registered without a namespace is in :default" do
@@ -342,29 +311,6 @@ defmodule Ark.Workflow.KeysAndRunTest do
       verify(pid)
     end
 
-    test "never raises: graph errors are returned with the workflow" do
-      wf =
-        Workflow.new()
-        |> Workflow.add_rule(:ok, const_rule(1))
-        |> Workflow.add_rule(:bad_dep, rule([fn _, _, _ -> "not a key" end], ok_body(1)))
-        |> Workflow.add_rule(:unknown_dep, rule([fn _, _, _ -> :nope end], ok_body(1)))
-
-      assert {:error, %GraphError{reason: {:unknown_rule, _}}, %Workflow{}} =
-               Workflow.run(wf, [:missing])
-
-      assert {:error, %GraphError{reason: {:invalid_key, "string"}}, %Workflow{}} =
-               Workflow.run(wf, ["string"])
-
-      assert {:error, e, wf2} = Workflow.run(wf, [:ok, :bad_dep])
-      assert {:bad_return, :deps, _, "not a key", {:invalid_key, "not a key"}} = e.reason
-      assert {:ok, 1} == Workflow.fetch(wf2, :ok)
-
-      assert {:error, e, %Workflow{}} = Workflow.run(wf, [:unknown_dep])
-
-      assert {:bad_return, :deps, _, :nope, {:unknown_rule, {:default, :nope, %{}}}} =
-               e.reason
-    end
-
     test "does not continue the targets of a previous interrupted run" do
       {pid, never} = mock_never(ok_body(1))
 
@@ -399,18 +345,9 @@ defmodule Ark.Workflow.KeysAndRunTest do
         |> Workflow.add_rule(:ok, const_rule(:value))
         |> Workflow.add_rule(:failed, failing_rule())
         |> Workflow.add_rule(:other, const_rule(:other))
-        |> Workflow.add_rule(:in_progress, %{
-          alts: [
-            first: %{deps: [], body: error_body()},
-            second: %{deps: [fn _, _, _ -> "not a key" end], body: ok_body(1)}
-          ]
-        })
 
       {:ok, wf} = Workflow.run(wf, [:ok])
       {:error, %ComputationError{}, wf} = Workflow.run(wf, [:failed])
-
-      {:error, %GraphError{reason: {:bad_return, :deps, _, _, _}}, wf} =
-        Workflow.run(wf, [:in_progress])
 
       %{wf: wf}
     end
@@ -422,13 +359,6 @@ defmodule Ark.Workflow.KeysAndRunTest do
     test "returns {:failed, failure_record} for a failed key", %{wf: wf} do
       assert {:failed, {:all_alternatives_failed, [:default]}} ==
                Workflow.fetch(wf, :failed)
-    end
-
-    test "returns :error for a key with attempts but no result", %{wf: wf} do
-      assert :error == Workflow.fetch(wf, :in_progress)
-
-      assert {:ok, %{first: {:computation_error, _}}} =
-               Workflow.attempts(wf, :in_progress)
     end
 
     test "returns :error for a key never demanded", %{wf: wf} do

@@ -203,4 +203,22 @@ defmodule Ark.Workflow.ComputationErrorTest do
     {e, _} = run_failed(wf, [:ok, {:fail1, %{id: 1}}, :fail2])
     assert key(:fail1, %{id: 1}) == e.target
   end
+
+  test "a tuple or a capture naming a function that does not exist fails the alternative with kind :error when it is called" do
+    for body <- [
+          {__MODULE__.NotYet, :body, []},
+          Function.capture(__MODULE__.NotYet, :body, 3),
+          {__MODULE__, :not_a_function, [1]},
+          Function.capture(__MODULE__, :not_a_function, 3)
+        ] do
+      wf = Workflow.add_rule(Workflow.new(), :a, rule([], body))
+
+      assert {:error, %ComputationError{causes: [cause]}, _} = Workflow.run(wf, [:a])
+
+      assert %{key: {:default, :a, %{}}, alternative: :default, error: %{kind: :error}} =
+               cause
+
+      assert cause.error.message =~ "UndefinedFunctionError"
+    end
+  end
 end

@@ -11,6 +11,34 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
   defmodule NsA do
   end
 
+  defmodule SomeStruct do
+    defstruct [:id, :tags]
+  end
+
+  defmodule DomainError do
+    defexception [:message]
+  end
+
+  def mfa_body(params, deps, ctx, log, extra) do
+    track(log, {:mfa_body, params, deps, ctx, extra})
+    {:ok, :from_mfa}
+  end
+
+  def mfa_deps(params, deps, ctx, log, extra) do
+    track(log, {:mfa_deps, params, deps, ctx, extra})
+    %{y: :b}
+  end
+
+  def capture_body(params, deps, %{log: log} = ctx) do
+    track(log, {:capture_body, params, deps, ctx})
+    {:ok, :from_capture}
+  end
+
+  def capture_deps(params, deps, %{log: log} = ctx) do
+    track(log, {:capture_deps, params, deps, ctx})
+    %{y: :b}
+  end
+
   def return_b(_params, _deps, _ctx) do
     :b
   end
@@ -36,6 +64,13 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
     |> Workflow.add_rule(:b, const_rule(:vb))
     |> Workflow.add_rule(:c, const_rule(:vc))
     |> Workflow.add_rule(:fail, failing_rule())
+  end
+
+  defp deps_attempt_error(deps_fun) do
+    wf = Workflow.add_rule(Workflow.new(), :r, rule([deps_fun], ok_body(1)))
+    assert {:error, %ComputationError{}, wf} = Workflow.run(wf, [:r])
+    assert {:ok, %{default: {:computation_error, cleaned}}} = Workflow.attempts(wf, :r)
+    cleaned
   end
 
   defp run_graph_error(wf, targets) do
@@ -598,5 +633,354 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
 
     assert {:ok, %{default: {:dep_failed, {:default, :fail, %{id: 404}}}}} ==
              Workflow.attempts(wf, :r)
+  end
+
+  describe "run" do
+    test "never raises: graph errors are returned with the workflow" do
+      wf =
+        Workflow.new()
+        |> Workflow.add_rule(:ok, const_rule(1))
+        |> Workflow.add_rule(:bad_dep, rule([fn _, _, _ -> "not a key" end], ok_body(1)))
+        |> Workflow.add_rule(:unknown_dep, rule([fn _, _, _ -> :nope end], ok_body(1)))
+
+      assert {:error, %GraphError{reason: {:unknown_rule, _}}, %Workflow{}} =
+               Workflow.run(wf, [:missing])
+
+      assert {:error, %GraphError{reason: {:invalid_key, "string"}}, %Workflow{}} =
+               Workflow.run(wf, ["string"])
+
+      assert {:error, e, wf2} = Workflow.run(wf, [:ok, :bad_dep])
+      assert {:bad_return, :deps, _, "not a key", {:invalid_key, "not a key"}} = e.reason
+      assert {:ok, 1} == Workflow.fetch(wf2, :ok)
+
+      assert {:error, e, %Workflow{}} = Workflow.run(wf, [:unknown_dep])
+
+      assert {:bad_return, :deps, _, :nope, {:unknown_rule, {:default, :nope, %{}}}} =
+               e.reason
+    end
+  end
+
+  describe "fetch" do
+    setup do
+      wf =
+        Workflow.add_rule(Workflow.new(), :in_progress, %{
+          alts: [
+            first: %{deps: [], body: error_body()},
+            second: %{deps: [fn _, _, _ -> "not a key" end], body: ok_body(1)}
+          ]
+        })
+
+      {:error, %GraphError{reason: {:bad_return, :deps, _, _, _}}, wf} =
+        Workflow.run(wf, [:in_progress])
+
+      %{wf: wf}
+    end
+
+    test "returns :error for a key with attempts but no result", %{wf: wf} do
+      assert :error == Workflow.fetch(wf, :in_progress)
+
+      assert {:ok, %{first: {:computation_error, _}}} =
+               Workflow.attempts(wf, :in_progress)
+    end
+  end
+
+  describe "a body receives params exactly as written by the code that demanded the key" do
+    test "from a key returned by a dependency function" do
+      {pid, body} = mock_fun(1, ok_body(1))
+      params = %{"id" => 1, :opt => [1, 2.0], :s => %SomeStruct{id: 3}}
+
+      wf =
+        Workflow.new()
+        |> Workflow.add_rule(:a, rule([], body))
+        |> Workflow.add_rule(:r, rule([fn _, _, _ -> {:a, params} end], deps_body()))
+
+      _ = run!(wf, [:r])
+
+      verify(pid)
+      assert [[^params, %{}, %{}]] = calls(pid)
+    end
+  end
+
+  test "a body of a key demanded without params receives %{}" do
+    {pid, body} = mock_fun(3, ok_body(1))
+
+    wf =
+      Workflow.new()
+      |> Workflow.add_rule(:a, rule([], body))
+      |> Workflow.add_rule({NsA, :b}, rule([], body))
+      |> Workflow.add_rule(:c, rule([], body))
+      |> Workflow.add_rule(:r, rule([{NsA, :b, %{}}, fn _, _, _ -> :c end], deps_body()))
+
+    _ = run!(wf, [:a, :r])
+
+    verify(pid)
+    assert [[%{}, _, _], [%{}, _, _], [%{}, _, _]] = calls(pid)
+  end
+
+  describe "the deps map given to a body" do
+    test "holds every dependency of the alternative, static and dynamic" do
+      wf =
+        Enum.reduce([:a, :b, :c, :d, :e, :f], Workflow.new(), fn name, wf ->
+          Workflow.add_rule(wf, name, const_rule(name))
+        end)
+
+      wf =
+        Workflow.add_rule(
+          wf,
+          :r,
+          rule(
+            [
+              :a,
+              fn _, _, _ -> :b end,
+              %{x: :c},
+              fn _, _, _ -> %{y: :d} end,
+              fn _, _, _ -> [:e, {:f, %{}}] end
+            ],
+            deps_body()
+          )
+        )
+
+      wf = run!(wf, [:r])
+
+      assert %{:a => :a, :b => :b, :x => :c, :y => :d, :e => :e, {:f, %{}} => :f} ==
+               fetch!(wf, :r)
+    end
+
+    test "exposes an aliased dependency under its alias, whatever the term used as alias" do
+      aliases = ["string", {:tuple, 1}, 1, 2.5, %{k: 1}, [:l], nil, true, :atom, NsA]
+
+      wf =
+        Enum.reduce(Enum.with_index(aliases), Workflow.new(), fn {_, i}, wf ->
+          Workflow.add_rule(wf, :"k#{i}", const_rule(i))
+        end)
+
+      static_map = Map.new(Enum.with_index(aliases), fn {a, i} -> {a, :"k#{i}"} end)
+
+      wf =
+        wf
+        |> Workflow.add_rule(:static, rule([static_map], deps_body()))
+        |> Workflow.add_rule(:dynamic, rule([fn _, _, _ -> static_map end], deps_body()))
+
+      wf = run!(wf, [:static, :dynamic])
+
+      expected = Map.new(Enum.with_index(aliases))
+      assert expected == fetch!(wf, :static)
+      assert expected == fetch!(wf, :dynamic)
+    end
+  end
+
+  describe "in a dependency list" do
+    test "a {module, function, list} tuple is called as a dependency function" do
+      wf =
+        Workflow.new()
+        |> Workflow.add_rule(:b, const_rule(:vb))
+        |> Workflow.add_rule(
+          :r,
+          rule([{__MODULE__, :return_key, [%{x: :b}]}], deps_body())
+        )
+
+      wf = run!(wf, [:r])
+      assert %{x: :vb} == fetch!(wf, :r)
+    end
+
+    test "a remote capture is called as a dependency function" do
+      wf =
+        Workflow.new()
+        |> Workflow.add_rule(:b, const_rule(:vb))
+        |> Workflow.add_rule(:r, rule([&__MODULE__.return_b/3], deps_body()))
+
+      wf = run!(wf, [:r])
+      assert %{b: :vb} == fetch!(wf, :r)
+    end
+  end
+
+  describe "a body and a dependency function are called with params, deps and context" do
+    test "as an anonymous function" do
+      {deps_pid, deps_fun} = mock_fun(1, fn _, _, _ -> %{y: :b} end)
+      {body_pid, body} = mock_fun(1, ok_body(:from_fun))
+
+      wf = Workflow.add_rule(base_graph(), :r, rule([%{x: :a}, deps_fun], body))
+      wf = run!(wf, [{:r, %{id: 1}}], context: %{ctx: 1})
+
+      verify(deps_pid)
+      verify(body_pid)
+      assert [[%{id: 1}, %{x: :va}, %{ctx: 1}]] == calls(deps_pid)
+      assert [[%{id: 1}, %{x: :va, y: :vb}, %{ctx: 1}]] == calls(body_pid)
+      assert :from_fun == fetch!(wf, {:r, %{id: 1}})
+    end
+
+    test "as a {module, function, extra_args} tuple, with extra_args appended after the engine's arguments" do
+      log = start_log()
+
+      wf =
+        Workflow.add_rule(
+          base_graph(),
+          :r,
+          rule(
+            [%{x: :a}, {__MODULE__, :mfa_deps, [log, :e1]}],
+            {__MODULE__, :mfa_body, [log, :e2]}
+          )
+        )
+
+      wf = run!(wf, [{:r, %{id: 1}}], context: %{ctx: 1})
+
+      assert [
+               {:mfa_deps, %{id: 1}, %{x: :va}, %{ctx: 1}, :e1},
+               {:mfa_body, %{id: 1}, %{x: :va, y: :vb}, %{ctx: 1}, :e2}
+             ] == logged(log)
+
+      assert :from_mfa == fetch!(wf, {:r, %{id: 1}})
+    end
+
+    test "as a remote capture" do
+      log = start_log()
+
+      wf =
+        Workflow.add_rule(
+          base_graph(),
+          :r,
+          rule([%{x: :a}, &__MODULE__.capture_deps/3], &__MODULE__.capture_body/3)
+        )
+
+      wf = run!(wf, [{:r, %{id: 1}}], context: %{log: log})
+
+      assert [
+               {:capture_deps, %{id: 1}, %{x: :va}, %{log: log}},
+               {:capture_body, %{id: 1}, %{x: :va, y: :vb}, %{log: log}}
+             ] == logged(log)
+
+      assert :from_capture == fetch!(wf, {:r, %{id: 1}})
+    end
+  end
+
+  test "a dependency function that raises, throws or exits records the same reason as a body would" do
+    assert %{kind: :error, reason: %DomainError{message: "domain failure"}} =
+             deps_attempt_error(fn _, _, _ -> raise DomainError, "domain failure" end)
+
+    assert %{kind: :error, reason: %ArgumentError{}} =
+             deps_attempt_error(fn _, _, _ -> :erlang.error(:badarg) end)
+
+    assert %{kind: :throw, reason: {:thrown, 1}} =
+             deps_attempt_error(fn _, _, _ -> throw({:thrown, 1}) end)
+
+    assert %{kind: :exit, reason: {:shutdown, :x}} =
+             deps_attempt_error(fn _, _, _ -> exit({:shutdown, :x}) end)
+  end
+
+  describe "within an alternative, dependencies are resolved left to right" do
+    test "a dependency is demanded only once every dependency to its left is ok" do
+      log = start_log()
+
+      wf =
+        Workflow.new()
+        |> Workflow.add_rule(:a, tracked_rule(log, :a))
+        |> Workflow.add_rule(:b, rule([:b_dep], tracked(log, :b, {:ok, :b})))
+        |> Workflow.add_rule(:b_dep, tracked_rule(log, :b_dep))
+        |> Workflow.add_rule(:c, tracked_rule(log, :c))
+        |> Workflow.add_rule(
+          :r,
+          rule([:a, :b, fn _, _, _ -> :c end], tracked(log, :r, {:ok, 1}))
+        )
+
+      _ = run!(wf, [:r])
+
+      assert [:a, :b_dep, :b, :c, :r] == logged(log)
+    end
+  end
+
+  test "{:dep_failed, dep_key} records the real key, never the alias it was demanded under" do
+    wf =
+      Workflow.new()
+      |> Workflow.add_rule(:b, failing_rule())
+      |> Workflow.add_rule(:r, %{
+        alts: [
+          static: %{deps: [%{x: {:b, %{id: 1}}}], body: ok_body(1)},
+          dynamic: %{deps: [fn _, _, _ -> %{y: {:b, %{id: 2}}} end], body: ok_body(1)}
+        ]
+      })
+
+    assert {:error, %ComputationError{}, wf} = Workflow.run(wf, [:r])
+
+    assert {:ok,
+            %{
+              static: {:dep_failed, {:default, :b, %{id: 1}}},
+              dynamic: {:dep_failed, {:default, :b, %{id: 2}}}
+            }} == Workflow.attempts(wf, :r)
+  end
+
+  test "a key demanded by several consumers in one run is computed once" do
+    {pid, body} = mock_fun(1, ok_body(:shared))
+
+    wf =
+      Workflow.new()
+      |> Workflow.add_rule(:shared, rule([], body))
+      |> Workflow.add_rule(:left, rule([:shared], deps_body()))
+      |> Workflow.add_rule(:right, rule([fn _, _, _ -> :shared end], deps_body()))
+      |> Workflow.add_rule(:top, rule([:left, :right, :shared], deps_body()))
+
+    wf = run!(wf, [:top, :shared])
+
+    verify(pid)
+
+    assert %{left: %{shared: :shared}, right: %{shared: :shared}, shared: :shared} ==
+             fetch!(wf, :top)
+  end
+
+  describe "the same real key demanded under different aliases is computed once and recorded under its real identity" do
+    setup do
+      {pid, body} = mock_fun(1, ok_body(:va))
+      wf = Workflow.add_rule(Workflow.new(), :a, rule([], body))
+      %{pid: pid, wf: wf}
+    end
+
+    test "from two consumers", %{pid: pid, wf: wf} do
+      wf =
+        wf
+        |> Workflow.add_rule(:r1, rule([%{"foo_123" => :a}], deps_body()))
+        |> Workflow.add_rule(
+          :r2,
+          rule([fn _, _, _ -> %{"foo_test" => {:a, %{}}} end], deps_body())
+        )
+
+      wf = run!(wf, [:r1, :r2])
+
+      verify(pid)
+      assert %{"foo_123" => :va} == fetch!(wf, :r1)
+      assert %{"foo_test" => :va} == fetch!(wf, :r2)
+      assert :va == fetch!(wf, :a)
+    end
+
+    test "from two dependency functions of one alternative", %{pid: pid, wf: wf} do
+      wf =
+        Workflow.add_rule(
+          wf,
+          :r,
+          rule(
+            [fn _, _, _ -> %{x: :a} end, fn _, _, _ -> %{y: {:default, :a, %{}}} end],
+            deps_body()
+          )
+        )
+
+      wf = run!(wf, [:r])
+
+      verify(pid)
+      assert %{x: :va, y: :va} == fetch!(wf, :r)
+      assert :va == fetch!(wf, :a)
+    end
+
+    test "from one dependency function returning both aliases", %{pid: pid, wf: wf} do
+      wf =
+        Workflow.add_rule(
+          wf,
+          :r,
+          rule([fn _, _, _ -> %{x: :a, y: {:a, %{}}} end], deps_body())
+        )
+
+      wf = run!(wf, [:r])
+
+      verify(pid)
+      assert %{x: :va, y: :va} == fetch!(wf, :r)
+      assert :va == fetch!(wf, :a)
+    end
   end
 end

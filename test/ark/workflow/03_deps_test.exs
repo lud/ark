@@ -12,14 +12,6 @@ defmodule Ark.Workflow.DepsTest do
   defmodule NsB do
   end
 
-  def return_key(_params, _deps, _ctx, key) do
-    key
-  end
-
-  def return_b(_params, _deps, _ctx) do
-    :b
-  end
-
   defp tracked_rule(log, value) do
     rule([], fn params, _, _ ->
       track(log, params)
@@ -78,56 +70,6 @@ defmodule Ark.Workflow.DepsTest do
   end
 
   describe "the deps map given to a body" do
-    test "holds every dependency of the alternative, static and dynamic" do
-      wf =
-        Enum.reduce([:a, :b, :c, :d, :e, :f], Workflow.new(), fn name, wf ->
-          Workflow.add_rule(wf, name, const_rule(name))
-        end)
-
-      wf =
-        Workflow.add_rule(
-          wf,
-          :r,
-          rule(
-            [
-              :a,
-              fn _, _, _ -> :b end,
-              %{x: :c},
-              fn _, _, _ -> %{y: :d} end,
-              fn _, _, _ -> [:e, {:f, %{}}] end
-            ],
-            deps_body()
-          )
-        )
-
-      wf = run!(wf, [:r])
-
-      assert %{:a => :a, :b => :b, :x => :c, :y => :d, :e => :e, {:f, %{}} => :f} ==
-               fetch!(wf, :r)
-    end
-
-    test "exposes an aliased dependency under its alias, whatever the term used as alias" do
-      aliases = ["string", {:tuple, 1}, 1, 2.5, %{k: 1}, [:l], nil, true, :atom, NsA]
-
-      wf =
-        Enum.reduce(Enum.with_index(aliases), Workflow.new(), fn {_, i}, wf ->
-          Workflow.add_rule(wf, :"k#{i}", const_rule(i))
-        end)
-
-      static_map = Map.new(Enum.with_index(aliases), fn {a, i} -> {a, :"k#{i}"} end)
-
-      wf =
-        wf
-        |> Workflow.add_rule(:static, rule([static_map], deps_body()))
-        |> Workflow.add_rule(:dynamic, rule([fn _, _, _ -> static_map end], deps_body()))
-
-      wf = run!(wf, [:static, :dynamic])
-
-      expected = Map.new(Enum.with_index(aliases))
-      assert expected == fetch!(wf, :static)
-      assert expected == fetch!(wf, :dynamic)
-    end
-
     test "exposes a dependency without alias as name, {name, %{}} or {ns, name, %{}} for the same namespace and empty params" do
       wf =
         Workflow.new()
@@ -264,29 +206,6 @@ defmodule Ark.Workflow.DepsTest do
   end
 
   describe "in a dependency list" do
-    test "a {module, function, list} tuple is called as a dependency function" do
-      wf =
-        Workflow.new()
-        |> Workflow.add_rule(:b, const_rule(:vb))
-        |> Workflow.add_rule(
-          :r,
-          rule([{__MODULE__, :return_key, [%{x: :b}]}], deps_body())
-        )
-
-      wf = run!(wf, [:r])
-      assert %{x: :vb} == fetch!(wf, :r)
-    end
-
-    test "a remote capture is called as a dependency function" do
-      wf =
-        Workflow.new()
-        |> Workflow.add_rule(:b, const_rule(:vb))
-        |> Workflow.add_rule(:r, rule([&__MODULE__.return_b/3], deps_body()))
-
-      wf = run!(wf, [:r])
-      assert %{b: :vb} == fetch!(wf, :r)
-    end
-
     test "a {ns, name, map} tuple is demanded as a key" do
       wf =
         Workflow.new()
