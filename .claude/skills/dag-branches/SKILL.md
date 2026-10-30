@@ -42,6 +42,13 @@ main
   failing test of `test/ark/workflow`, so the user can start over with a
   single failure. Add the tags without committing, and list the tests that
   were skipped.
+- When a change on common-test moves or rewrites tests, Claude may rebase
+  impl-b onto it. Resolve the conflicts in `test/ark/workflow` by taking
+  the common-test version, without placing `@tag :skip` by hand. Then add
+  one commit on top of impl-b that removes every `@tag :skip`, runs the
+  suite and tags each failing test. Failure headers may be prefixed by
+  debug output and ANSI codes, so strip those before collecting the
+  `file:line` of each failure.
 
 ## Worktree
 

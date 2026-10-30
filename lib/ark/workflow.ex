@@ -568,7 +568,6 @@ defmodule Ark.Workflow do
   - Anything else: validate it as a single static key.
   """
 
-
   defp do_pull_deps([dyn(callback: fun) = dep | deps], acc, store, key, wf) do
     {ns, _, params} = key
 
