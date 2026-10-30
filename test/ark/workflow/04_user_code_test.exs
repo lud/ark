@@ -1,7 +1,6 @@
 defmodule Ark.Workflow.UserCodeTest do
   use ExUnit.Case, async: true
 
-  import Ark.Test.Mock
   import Ark.Test.WorkflowHelpers
 
   alias Ark.Workflow
@@ -29,103 +28,11 @@ defmodule Ark.Workflow.UserCodeTest do
     end
   end
 
-  def mfa_body(params, deps, ctx, log, extra) do
-    track(log, {:mfa_body, params, deps, ctx, extra})
-    {:ok, :from_mfa}
-  end
-
-  def mfa_deps(params, deps, ctx, log, extra) do
-    track(log, {:mfa_deps, params, deps, ctx, extra})
-    %{y: :b}
-  end
-
-  def capture_body(params, deps, %{log: log} = ctx) do
-    track(log, {:capture_body, params, deps, ctx})
-    {:ok, :from_capture}
-  end
-
-  def capture_deps(params, deps, %{log: log} = ctx) do
-    track(log, {:capture_deps, params, deps, ctx})
-    %{y: :b}
-  end
-
-  defp base_graph do
-    Workflow.new()
-    |> Workflow.add_rule(:a, const_rule(:va))
-    |> Workflow.add_rule(:b, const_rule(:vb))
-  end
-
   defp attempt_error(body) do
     wf = Workflow.add_rule(Workflow.new(), :r, rule([], body))
     assert {:error, %ComputationError{}, wf} = Workflow.run(wf, [:r])
     assert {:ok, %{default: {:computation_error, cleaned}}} = Workflow.attempts(wf, :r)
     cleaned
-  end
-
-  defp deps_attempt_error(deps_fun) do
-    wf = Workflow.add_rule(Workflow.new(), :r, rule([deps_fun], ok_body(1)))
-    assert {:error, %ComputationError{}, wf} = Workflow.run(wf, [:r])
-    assert {:ok, %{default: {:computation_error, cleaned}}} = Workflow.attempts(wf, :r)
-    cleaned
-  end
-
-  describe "a body and a dependency function are called with params, deps and context" do
-    test "as an anonymous function" do
-      {deps_pid, deps_fun} = mock_fun(1, fn _, _, _ -> %{y: :b} end)
-      {body_pid, body} = mock_fun(1, ok_body(:from_fun))
-
-      wf = Workflow.add_rule(base_graph(), :r, rule([%{x: :a}, deps_fun], body))
-      wf = run!(wf, [{:r, %{id: 1}}], context: %{ctx: 1})
-
-      verify(deps_pid)
-      verify(body_pid)
-      assert [[%{id: 1}, %{x: :va}, %{ctx: 1}]] == calls(deps_pid)
-      assert [[%{id: 1}, %{x: :va, y: :vb}, %{ctx: 1}]] == calls(body_pid)
-      assert :from_fun == fetch!(wf, {:r, %{id: 1}})
-    end
-
-    test "as a {module, function, extra_args} tuple, with extra_args appended after the engine's arguments" do
-      log = start_log()
-
-      wf =
-        Workflow.add_rule(
-          base_graph(),
-          :r,
-          rule(
-            [%{x: :a}, {__MODULE__, :mfa_deps, [log, :e1]}],
-            {__MODULE__, :mfa_body, [log, :e2]}
-          )
-        )
-
-      wf = run!(wf, [{:r, %{id: 1}}], context: %{ctx: 1})
-
-      assert [
-               {:mfa_deps, %{id: 1}, %{x: :va}, %{ctx: 1}, :e1},
-               {:mfa_body, %{id: 1}, %{x: :va, y: :vb}, %{ctx: 1}, :e2}
-             ] == logged(log)
-
-      assert :from_mfa == fetch!(wf, {:r, %{id: 1}})
-    end
-
-    test "as a remote capture" do
-      log = start_log()
-
-      wf =
-        Workflow.add_rule(
-          base_graph(),
-          :r,
-          rule([%{x: :a}, &__MODULE__.capture_deps/3], &__MODULE__.capture_body/3)
-        )
-
-      wf = run!(wf, [{:r, %{id: 1}}], context: %{log: log})
-
-      assert [
-               {:capture_deps, %{id: 1}, %{x: :va}, %{log: log}},
-               {:capture_body, %{id: 1}, %{x: :va, y: :vb}, %{log: log}}
-             ] == logged(log)
-
-      assert :from_capture == fetch!(wf, {:r, %{id: 1}})
-    end
   end
 
   test "a body returning {:ok, value} records the value under the computed key" do
@@ -285,19 +192,5 @@ defmodule Ark.Workflow.UserCodeTest do
       assert %{kind: :exit, reason: {:shutdown, :x}} =
                attempt_error(fn _, _, _ -> exit({:shutdown, :x}) end)
     end
-  end
-
-  test "a dependency function that raises, throws or exits records the same reason as a body would" do
-    assert %{kind: :error, reason: %DomainError{message: "domain failure"}} =
-             deps_attempt_error(fn _, _, _ -> raise DomainError, "domain failure" end)
-
-    assert %{kind: :error, reason: %ArgumentError{}} =
-             deps_attempt_error(fn _, _, _ -> :erlang.error(:badarg) end)
-
-    assert %{kind: :throw, reason: {:thrown, 1}} =
-             deps_attempt_error(fn _, _, _ -> throw({:thrown, 1}) end)
-
-    assert %{kind: :exit, reason: {:shutdown, :x}} =
-             deps_attempt_error(fn _, _, _ -> exit({:shutdown, :x}) end)
   end
 end

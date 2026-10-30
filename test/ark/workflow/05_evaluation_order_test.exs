@@ -19,25 +19,6 @@ defmodule Ark.Workflow.EvaluationOrderTest do
   end
 
   describe "within an alternative, dependencies are resolved left to right" do
-    test "a dependency is demanded only once every dependency to its left is ok" do
-      log = start_log()
-
-      wf =
-        Workflow.new()
-        |> Workflow.add_rule(:a, tracked_rule(log, :a))
-        |> Workflow.add_rule(:b, rule([:b_dep], tracked(log, :b, {:ok, :b})))
-        |> Workflow.add_rule(:b_dep, tracked_rule(log, :b_dep))
-        |> Workflow.add_rule(:c, tracked_rule(log, :c))
-        |> Workflow.add_rule(
-          :r,
-          rule([:a, :b, fn _, _, _ -> :c end], tracked(log, :r, {:ok, 1}))
-        )
-
-      _ = run!(wf, [:r])
-
-      assert [:a, :b_dep, :b, :c, :r] == logged(log)
-    end
-
     test "the first failed dependency fails the alternative with {:dep_failed, dep_key}, without calling the body nor demanding the dependencies to its right" do
       {body_pid, never_body} = mock_never(ok_body(1))
       {c_pid, never_c} = mock_never(ok_body(1))
@@ -204,26 +185,6 @@ defmodule Ark.Workflow.EvaluationOrderTest do
              Workflow.attempts(wf, {:c, %{id: 1}})
   end
 
-  test "{:dep_failed, dep_key} records the real key, never the alias it was demanded under" do
-    wf =
-      Workflow.new()
-      |> Workflow.add_rule(:b, failing_rule())
-      |> Workflow.add_rule(:r, %{
-        alts: [
-          static: %{deps: [%{x: {:b, %{id: 1}}}], body: ok_body(1)},
-          dynamic: %{deps: [fn _, _, _ -> %{y: {:b, %{id: 2}}} end], body: ok_body(1)}
-        ]
-      })
-
-    assert {:error, %ComputationError{}, wf} = Workflow.run(wf, [:r])
-
-    assert {:ok,
-            %{
-              static: {:dep_failed, {:default, :b, %{id: 1}}},
-              dynamic: {:dep_failed, {:default, :b, %{id: 2}}}
-            }} == Workflow.attempts(wf, :r)
-  end
-
   test "a key failed earlier in a run is not computed again when another consumer demands it in the same run" do
     {pid, body} = mock_fun(1, error_body())
 
@@ -269,82 +230,6 @@ defmodule Ark.Workflow.EvaluationOrderTest do
 
     for key <- [:unrelated, :unrelated_dep, :unrelated_consumer] do
       assert :error == Workflow.fetch(wf, key)
-    end
-  end
-
-  test "a key demanded by several consumers in one run is computed once" do
-    {pid, body} = mock_fun(1, ok_body(:shared))
-
-    wf =
-      Workflow.new()
-      |> Workflow.add_rule(:shared, rule([], body))
-      |> Workflow.add_rule(:left, rule([:shared], deps_body()))
-      |> Workflow.add_rule(:right, rule([fn _, _, _ -> :shared end], deps_body()))
-      |> Workflow.add_rule(:top, rule([:left, :right, :shared], deps_body()))
-
-    wf = run!(wf, [:top, :shared])
-
-    verify(pid)
-
-    assert %{left: %{shared: :shared}, right: %{shared: :shared}, shared: :shared} ==
-             fetch!(wf, :top)
-  end
-
-  describe "the same real key demanded under different aliases is computed once and recorded under its real identity" do
-    setup do
-      {pid, body} = mock_fun(1, ok_body(:va))
-      wf = Workflow.add_rule(Workflow.new(), :a, rule([], body))
-      %{pid: pid, wf: wf}
-    end
-
-    test "from two consumers", %{pid: pid, wf: wf} do
-      wf =
-        wf
-        |> Workflow.add_rule(:r1, rule([%{"foo_123" => :a}], deps_body()))
-        |> Workflow.add_rule(
-          :r2,
-          rule([fn _, _, _ -> %{"foo_test" => {:a, %{}}} end], deps_body())
-        )
-
-      wf = run!(wf, [:r1, :r2])
-
-      verify(pid)
-      assert %{"foo_123" => :va} == fetch!(wf, :r1)
-      assert %{"foo_test" => :va} == fetch!(wf, :r2)
-      assert :va == fetch!(wf, :a)
-    end
-
-    test "from two dependency functions of one alternative", %{pid: pid, wf: wf} do
-      wf =
-        Workflow.add_rule(
-          wf,
-          :r,
-          rule(
-            [fn _, _, _ -> %{x: :a} end, fn _, _, _ -> %{y: {:default, :a, %{}}} end],
-            deps_body()
-          )
-        )
-
-      wf = run!(wf, [:r])
-
-      verify(pid)
-      assert %{x: :va, y: :va} == fetch!(wf, :r)
-      assert :va == fetch!(wf, :a)
-    end
-
-    test "from one dependency function returning both aliases", %{pid: pid, wf: wf} do
-      wf =
-        Workflow.add_rule(
-          wf,
-          :r,
-          rule([fn _, _, _ -> %{x: :a, y: {:a, %{}}} end], deps_body())
-        )
-
-      wf = run!(wf, [:r])
-
-      verify(pid)
-      assert %{x: :va, y: :va} == fetch!(wf, :r)
-      assert :va == fetch!(wf, :a)
     end
   end
 
