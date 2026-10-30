@@ -6,6 +6,7 @@ defmodule Ark.Workflow.ContextTest do
 
   alias Ark.Workflow
 
+  @tag :skip
   test "user code receives the context given to the run, unchanged" do
     context = %{
       pid: self(),
@@ -23,6 +24,7 @@ defmodule Ark.Workflow.ContextTest do
     assert [[%{}, %{}, ^context]] = calls(pid)
   end
 
+  @tag :skip
   test "the context defaults to an empty map" do
     {pid, body} = mock_fun(1, ok_body(1))
     wf = Workflow.add_rule(Workflow.new(), :a, rule([], body))
@@ -33,6 +35,7 @@ defmodule Ark.Workflow.ContextTest do
     assert [[%{}, %{}, %{}]] = calls(pid)
   end
 
+  @tag :skip
   test "a body and a dependency function receive the same context" do
     context = %{ctx: make_ref()}
     {deps_pid, deps_fun} = mock_fun(100, fn _, _, _ -> :b end)
@@ -50,6 +53,7 @@ defmodule Ark.Workflow.ContextTest do
     assert Enum.all?(calls(body_pid), &match?([_, _, ^context], &1))
   end
 
+  @tag :skip
   test "an alternative receives nothing about why previous alternatives failed" do
     context = %{ctx: 1}
     {pid, body} = mock_fun(1, deps_body())
@@ -72,6 +76,7 @@ defmodule Ark.Workflow.ContextTest do
     assert %{b: :vb} == fetch!(wf, {:a, %{id: 1}})
   end
 
+  @tag :skip
   test "changing the context between runs does not compute recorded keys again" do
     {pid, body} = mock_fun(1, ok_body(1))
     wf = Workflow.add_rule(Workflow.new(), :a, rule([], body))

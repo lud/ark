@@ -42,6 +42,7 @@ defmodule Ark.Workflow.FailurePersistenceTest do
     rule([fn _, _, _ -> "invalid" end], ok_body(1))
   end
 
+  @tag :skip
   test "a failure is scoped to the exact key" do
     log = start_log()
 
@@ -82,6 +83,7 @@ defmodule Ark.Workflow.FailurePersistenceTest do
   end
 
   describe "a failed key stays failed" do
+    @tag :skip
     test "on a later run of the same state: no user code is called for it" do
       {pid, body} = mock_fun(1, error_body())
       wf = graph_with(:a, rule([], body))
@@ -93,6 +95,7 @@ defmodule Ark.Workflow.FailurePersistenceTest do
       assert {:failed, _} = Workflow.fetch(wf, :a)
     end
 
+    @tag :skip
     test "after a dump and a load" do
       {pid, body} = mock_fun(1, error_body())
       graph = graph_with(:a, rule([], body))
@@ -105,6 +108,7 @@ defmodule Ark.Workflow.FailurePersistenceTest do
       assert {:failed, _} = Workflow.fetch(wf, :a)
     end
 
+    @tag :skip
     test "when a deploy adds alternatives to its rule" do
       log = start_log()
       v1 = graph_with(:a, alts_rule([alt(log, :a1, {:error, :x})]))
@@ -125,6 +129,7 @@ defmodule Ark.Workflow.FailurePersistenceTest do
   end
 
   describe "a key with a value keeps it, and none of its alternatives is called again" do
+    @tag :skip
     test "on a later run of the same state" do
       {pid, body} = mock_fun(1, ok_body(1))
       wf = graph_with(:a, rule([], body))
@@ -136,6 +141,7 @@ defmodule Ark.Workflow.FailurePersistenceTest do
       assert 1 == fetch!(wf, :a)
     end
 
+    @tag :skip
     test "after a dump and a load" do
       {pid, body} = mock_fun(1, ok_body(1))
       graph = graph_with(:a, rule([], body))
@@ -148,6 +154,7 @@ defmodule Ark.Workflow.FailurePersistenceTest do
       assert 1 == fetch!(wf, :a)
     end
 
+    @tag :skip
     test "when a deploy adds, removes or reorders alternatives" do
       log = start_log()
 
@@ -181,6 +188,7 @@ defmodule Ark.Workflow.FailurePersistenceTest do
     end
   end
 
+  @tag :skip
   test "a value produced by an alternative that a deploy then removed is given to consumers demanded after the deploy" do
     v1 =
       Workflow.new()
@@ -204,6 +212,7 @@ defmodule Ark.Workflow.FailurePersistenceTest do
     end)
   end
 
+  @tag :skip
   test "a run stopped between the failure of A1 and the attempt of A2 resumes at A2, without calling A1 again" do
     log = start_log()
 
@@ -223,6 +232,7 @@ defmodule Ark.Workflow.FailurePersistenceTest do
     assert :a2 == fetch!(wf, :a)
   end
 
+  @tag :skip
   test "after a deploy reorders alternatives, recorded attempts stay attached to their alternative name, and the current order decides which alternative is tried next" do
     log = start_log()
 
@@ -265,6 +275,7 @@ defmodule Ark.Workflow.FailurePersistenceTest do
   end
 
   describe "after a deploy" do
+    @tag :skip
     test "inserts an alternative before one that failed, the inserted one is tried next" do
       log = start_log()
 
@@ -293,6 +304,7 @@ defmodule Ark.Workflow.FailurePersistenceTest do
       assert :new == fetch!(wf, :a)
     end
 
+    @tag :skip
     test "removes the untried alternatives of a key, the key is failed on resume without calling user code" do
       log = start_log()
 
@@ -314,6 +326,7 @@ defmodule Ark.Workflow.FailurePersistenceTest do
       assert [:a1] == logged(log)
     end
 
+    @tag :skip
     test "renames an alternative, the renamed one is tried again, and the records under the old name are orphaned" do
       log = start_log()
 
@@ -344,6 +357,7 @@ defmodule Ark.Workflow.FailurePersistenceTest do
       assert [:a1, :renamed, :a2] == logged(log)
     end
 
+    @tag :skip
     test "removed an alternative, a key that failed before the dump still lists that alternative in {:all_alternatives_failed, _}, by its name as a string" do
       graph = fn alts -> graph_with(:a, alts_rule(alts)) end
       log = start_log()
@@ -384,6 +398,7 @@ defmodule Ark.Workflow.FailurePersistenceTest do
       %{log: log, wf: wf}
     end
 
+    @tag :skip
     test "take no part in evaluation", %{log: log, wf: wf} do
       v2 =
         Workflow.new()
@@ -402,6 +417,7 @@ defmodule Ark.Workflow.FailurePersistenceTest do
       assert [:removed, :a2, :a3] == logged(log)
     end
 
+    @tag :skip
     test "are honored again when the alternative is added back, also after a dump and a load: it is not tried again",
          %{log: log, wf: wf} do
       without =

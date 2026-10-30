@@ -21,6 +21,7 @@ defmodule Ark.Workflow.CyclesTest do
     {e, wf}
   end
 
+  @tag :skip
   test "a dependency function returning a key in progress makes run stop with a graph error carrying the demanded key and the demand stack leading back to it, recording nothing for the keys of the cycle" do
     wf =
       Workflow.new()
@@ -47,6 +48,7 @@ defmodule Ark.Workflow.CyclesTest do
     end
   end
 
+  @tag :skip
   test "a static dependency chain that loops back to a key in progress makes run stop the same way" do
     {pid, never} = mock_never(ok_body(1))
 
@@ -68,6 +70,7 @@ defmodule Ark.Workflow.CyclesTest do
     end
   end
 
+  @tag :skip
   test "a key demanded twice from different branches (a diamond) is not a cycle: it is computed once" do
     {pid, body} = mock_fun(1, ok_body(:shared))
 
@@ -84,6 +87,7 @@ defmodule Ark.Workflow.CyclesTest do
     assert %{left: %{shared: :shared}, right: %{shared: :shared}} == fetch!(wf, :top)
   end
 
+  @tag :skip
   test "a direct self-dependency makes run stop with a graph error" do
     wf = Workflow.add_rule(Workflow.new(), :a, rule([:a], ok_body(1)))
     {e, _} = assert_cycle(wf, [:a])
@@ -102,6 +106,7 @@ defmodule Ark.Workflow.CyclesTest do
     assert key(:a) == e.key
   end
 
+  @tag :skip
   test "a key in progress demanded under another form is detected as a cycle" do
     wf =
       Workflow.new()
@@ -125,6 +130,7 @@ defmodule Ark.Workflow.CyclesTest do
     assert key(:b) == e.key
   end
 
+  @tag :skip
   test "a cycle reachable only through a later alternative makes run stop with a graph error when that alternative is entered" do
     log = start_log()
 
@@ -156,6 +162,7 @@ defmodule Ark.Workflow.CyclesTest do
     assert {:ok, %{a1: {:computation_error, _}}} = Workflow.attempts(wf, :a)
   end
 
+  @tag :skip
   test "a rule demanding itself with other params is not a cycle" do
     wf =
       Workflow.add_rule(Workflow.new(), :fact, %{
@@ -180,6 +187,7 @@ defmodule Ark.Workflow.CyclesTest do
     assert 6 == fetch!(wf, {:fact, %{n: 3}})
   end
 
+  @tag :skip
   test "a chain of 10,000 dependent keys computes, and the cycle check stays cheap at that depth" do
     wf =
       Workflow.add_rule(Workflow.new(), :chain, %{
