@@ -1,5 +1,6 @@
 defmodule Ark.Workflow do
   alias Ark.Workflow.GraphError
+  alias Ark.Workflow.ComputationError
   require Record
   require Logger
 
@@ -12,7 +13,7 @@ defmodule Ark.Workflow do
   defguardp is_name(term) when is_atom(term) and term not in [nil, true, false]
 
   # Represents a rule instance (with params) on the stack in the run loop
-  Record.defrecordp(:frame, :frame,
+  Record.defrecordp(:frame,
     # The rule full key
     key: nil,
 
@@ -22,7 +23,7 @@ defmodule Ark.Workflow do
   )
 
   # Represents the progress of an alternative within a frame
-  Record.defrecordp(:arm, :arm,
+  Record.defrecordp(:arm,
     # The alternative key
     key: nil,
 
@@ -36,9 +37,9 @@ defmodule Ark.Workflow do
     alt: nil
   )
 
-  Record.defrecordp(:dep, :dep, alias: nil, key: nil, source: nil)
+  Record.defrecordp(:dep, alias: nil, key: nil, source: nil)
 
-  Record.defrecordp(:dyn, :dyn, callback: nil)
+  Record.defrecordp(:dyn, callback: nil)
 
   def new() do
     new([])
@@ -82,26 +83,35 @@ defmodule Ark.Workflow do
     prerun_check!(wf)
     %{stack: stack, store: store, default_ns: default_ns} = wf
 
-    case run_targets(targets, store, wf) do
-      {:ok, store} -> {:ok, %{wf | stack: [], store: store}}
+    case run_targets(targets, store, wf) |> dbg() do
+      {:ok, store} ->
+        {:ok, %{wf | stack: [], store: store}}
+
+      {:failed, key, store} ->
+        {:error, %ComputationError{}, %{wf | stack: [], store: store}} |> dbg()
     end
   catch
     {:stop_run, e, wf} -> {:error, e, wf}
   end
 
-  defp run_targets([target | rest] = targets, store, wf) do
+  defp run_targets([target | targets] = all_targets, store, wf) do
+    target |> dbg()
     key = full_key(target, wf.default_ns)
 
+    # Check if target already ran from a previous run() call
     case store.results do
       %{^key => {:ok, _}} ->
-        run_targets(rest, store, wf)
+        run_targets(targets, store, wf)
 
       %{^key => {:failed, _}} ->
         {:failed, key, store}
 
       _ ->
-        {:ok, [], store} = run_loop([new_frame(key, store, wf)], store, wf)
-        run_targets(targets, store, wf)
+        {:ok, [], store} = run_loop([new_frame(key, store, wf)], store, wf) |> dbg()
+
+        # running with the same target again to return from :failed from this
+        # function if it failed and so skip computing other targets.
+        run_targets(all_targets, store, wf)
     end
   end
 
@@ -398,12 +408,19 @@ defmodule Ark.Workflow do
        ) do
     IO.puts("== frame #{inspect(debug_frame(frame))}")
 
+    arm(key: alt_key) = arm
+
     case pull_deps(arm, store, key, wf) do
       {:ready, arm(alt: :targets)} ->
         run_loop(frames, store, wf)
 
+      {:needy, arm(deps: [dep(key: dep_key) | _]) = arm} ->
+        frame = frame(frame, arms: [arm | arms])
+        stack = [frame | frames]
+        stack = push_frame(stack, dep_key, store, wf)
+        run_loop(stack, store, wf)
+
       {:ready, arm} ->
-        arm(key: alt_key) = arm
         {_, _, params} = key
 
         IO.puts("== call #{inspect(key)} / inspect #{alt_key}")
@@ -423,11 +440,10 @@ defmodule Ark.Workflow do
             run_loop([frame | frames], store, wf)
         end
 
-      {:needy, arm(deps: [dep(key: dep_key) | _]) = arm} ->
-        frame = frame(frame, arms: [arm | arms])
-        stack = [frame | frames]
-        stack = push_frame(stack, dep_key, store, wf)
-        run_loop(stack, store, wf)
+      {:error, :dep_failed, dep(key: dep_key) = dep} ->
+        store = put_attempt(store, key, alt_key, {:dep_failed, dep_key})
+        frame = frame(frame, arms: arms)
+        run_loop([frame | frames], store, wf)
     end
   end
 
@@ -503,8 +519,8 @@ defmodule Ark.Workflow do
           _ -> {:needy, arm}
         end
 
-      {:error, :dep_failure, remaining_deps, acc} ->
-        {:error, :dep_failure, arm = arm(arm, deps: remaining_deps, acc: acc)}
+      {:error, :dep_failed, dep} ->
+        {:error, :dep_failed, dep}
     end
   end
 
@@ -515,7 +531,7 @@ defmodule Ark.Workflow do
         do_pull_deps(deps, acc, store, key, wf)
 
       %{^fk => {:failed, _} = err} ->
-        {[dep | deps], acc}
+        {:error, :dep_failed, dep}
 
       _ ->
         {:ok, [dep | deps], acc}
