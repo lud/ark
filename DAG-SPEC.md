@@ -1787,6 +1787,8 @@ helpers in `test/support` are left to the implementor.
   - ...keeps the other attempt records of the keys reached by the
     propagation: the next run retries only the alternatives that failed
     because of a cleared key
+  - ...retries a cleared alternative placed between alternatives that keep
+    their failure
   - ...keeps every recorded value
   - ...propagates through orphaned records
   - ...accepts the key forms that `run` accepts for targets
