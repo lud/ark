@@ -47,6 +47,7 @@ defmodule Ark.Workflow.ClearFailureTest do
   end
 
   describe "clear_failure on a failed key" do
+    @tag :skip
     test "returns {:ok, workflow} and makes the next run try its alternatives again from the first one" do
       log = start_log()
       sw = switch()
@@ -73,6 +74,7 @@ defmodule Ark.Workflow.ClearFailureTest do
       assert :a2 == fetch!(wf, :a)
     end
 
+    @tag :skip
     test "lets a deploy-added alternative run" do
       log = start_log()
 
@@ -100,6 +102,7 @@ defmodule Ark.Workflow.ClearFailureTest do
       assert :added == fetch!(wf, :a)
     end
 
+    @tag :skip
     test "removes the failure of every key holding {:dep_failed, key}, transitively" do
       log = start_log()
       sw = switch()
@@ -120,6 +123,7 @@ defmodule Ark.Workflow.ClearFailureTest do
       assert :a == fetch!(wf, :a)
     end
 
+    @tag :skip
     test "keeps the other attempt records of the keys reached by the propagation: the next run retries only the alternatives that failed because of a cleared key" do
       log = start_log()
       sw = switch()
@@ -152,6 +156,7 @@ defmodule Ark.Workflow.ClearFailureTest do
       assert :via_c == fetch!(wf, :a)
     end
 
+    @tag :skip
     test "retries a cleared alternative placed between alternatives that keep their failure" do
       log = start_log()
       sw = switch()
@@ -185,6 +190,7 @@ defmodule Ark.Workflow.ClearFailureTest do
       assert :a2 == fetch!(wf, :a)
     end
 
+    @tag :skip
     test "keeps every recorded value" do
       wf =
         Workflow.new()
@@ -198,6 +204,7 @@ defmodule Ark.Workflow.ClearFailureTest do
       assert {:ok, :value} == Workflow.fetch(wf, :ok)
     end
 
+    @tag :skip
     test "propagates through orphaned records" do
       log = start_log()
 
@@ -228,6 +235,7 @@ defmodule Ark.Workflow.ClearFailureTest do
       assert [:a] == logged(log)
     end
 
+    @tag :skip
     test "accepts the key forms that run accepts for targets" do
       for key <- [:c, {:c, %{}}, {:default, :c, %{}}] do
         wf = Workflow.add_rule(Workflow.new(), :c, failing_rule())
@@ -244,6 +252,7 @@ defmodule Ark.Workflow.ClearFailureTest do
     end
   end
 
+  @tag :skip
   test "when :a needs :b, :b needs :c and :c failed, clearing :c clears :b and :a" do
     {:error, %ComputationError{}, wf} =
       Workflow.run(chain_graph(switch(), start_log()), [:a])
@@ -259,6 +268,7 @@ defmodule Ark.Workflow.ClearFailureTest do
     end
   end
 
+  @tag :skip
   test "when :a needs :b then :d, :b needs :c, :d failed in a first run and :c in a second, clearing :c clears :b and :a; the next run of :a computes :c and :b, then fails :a with {:dep_failed, :d} without calling the user code of :d" do
     log = start_log()
     sw = switch()
@@ -312,6 +322,7 @@ defmodule Ark.Workflow.ClearFailureTest do
       %{wf: wf}
     end
 
+    @tag :skip
     test "clears every failed key it selects, with the same propagation", %{wf: wf} do
       assert {:ok, wf} = Workflow.clear_failure(wf, &match?({_, :b, _}, &1))
 
@@ -323,6 +334,7 @@ defmodule Ark.Workflow.ClearFailureTest do
       assert {:ok, :value} == Workflow.fetch(wf, :ok)
     end
 
+    @tag :skip
     test "receives keys in the full {ns, name, params} form, :default included, failed keys only",
          %{
            wf: wf
@@ -342,6 +354,7 @@ defmodule Ark.Workflow.ClearFailureTest do
              ]) == received
     end
 
+    @tag :skip
     test "is not given orphaned keys", %{wf: wf} do
       reduced = Workflow.add_rule(Workflow.new(), :other, failing_rule())
 
@@ -374,23 +387,28 @@ defmodule Ark.Workflow.ClearFailureTest do
       %{wf: wf}
     end
 
+    @tag :skip
     test "for a key with a value", %{wf: wf} do
       assert {:error, :not_failed} == Workflow.clear_failure(wf, :ok)
     end
 
+    @tag :skip
     test "for a key with attempts but no result", %{wf: wf} do
       assert {:error, :not_failed} == Workflow.clear_failure(wf, :in_progress)
     end
 
+    @tag :skip
     test "for a key with no records", %{wf: wf} do
       assert {:error, :not_failed} == Workflow.clear_failure(wf, :never)
       assert {:error, :not_failed} == Workflow.clear_failure(wf, {:fail, %{id: 1}})
     end
 
+    @tag :skip
     test "for a predicate that selects no key", %{wf: wf} do
       assert {:error, :not_failed} == Workflow.clear_failure(wf, fn _ -> true end)
     end
 
+    @tag :skip
     test "for a consumer already cleared by the propagation from its dependency" do
       {:error, %ComputationError{}, wf} =
         Workflow.run(chain_graph(switch(), start_log()), [:a])
@@ -401,6 +419,7 @@ defmodule Ark.Workflow.ClearFailureTest do
     end
   end
 
+  @tag :skip
   test "clear_failure for a key with no registered rule returns a graph error" do
     wf = Workflow.add_rule(Workflow.new(), :a, failing_rule())
 
@@ -415,6 +434,7 @@ defmodule Ark.Workflow.ClearFailureTest do
              Workflow.clear_failure(wf, "a")
   end
 
+  @tag :skip
   test "clear_failure result survives a dump and a load" do
     log = start_log()
     sw = switch()

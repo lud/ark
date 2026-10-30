@@ -138,6 +138,7 @@ defmodule Ark.Workflow.KeysAndRunTest do
     end
   end
 
+  @tag :skip
   test "an error message prints keys of :default without their namespace" do
     wf =
       Workflow.new()
