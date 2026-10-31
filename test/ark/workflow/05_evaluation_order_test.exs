@@ -191,7 +191,6 @@ defmodule Ark.Workflow.EvaluationOrderTest do
              Workflow.attempts(wf, {:c, %{id: 1}})
   end
 
-  @tag :skip
   test "a key failed earlier in a run is not computed again when another consumer demands it in the same run" do
     {pid, body} = mock_fun(1, error_body())
 
@@ -256,7 +255,6 @@ defmodule Ark.Workflow.EvaluationOrderTest do
       assert [:c, :a_dep, :a, :b] == logged(log)
     end
 
-    @tag :skip
     test "the first failed target stops the run, later targets are never demanded" do
       {pid, never} = mock_never(ok_body(1))
 

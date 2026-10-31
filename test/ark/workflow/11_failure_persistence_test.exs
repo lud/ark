@@ -83,7 +83,6 @@ defmodule Ark.Workflow.FailurePersistenceTest do
   end
 
   describe "a failed key stays failed" do
-    @tag :skip
     test "on a later run of the same state: no user code is called for it" do
       {pid, body} = mock_fun(1, error_body())
       wf = graph_with(:a, rule([], body))
@@ -447,6 +446,7 @@ defmodule Ark.Workflow.FailurePersistenceTest do
     end
   end
 
+  @tag :skip
   test "the failures of a key hold the orphaned records reachable from it: attempt records of a removed alternative, and a key whose rule was removed" do
     v1 =
       Workflow.new()

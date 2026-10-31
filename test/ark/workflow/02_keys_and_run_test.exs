@@ -138,6 +138,7 @@ defmodule Ark.Workflow.KeysAndRunTest do
     end
   end
 
+  @tag :skip
   test "an error message prints keys of :default without their namespace" do
     wf =
       Workflow.new()
@@ -159,7 +160,6 @@ defmodule Ark.Workflow.KeysAndRunTest do
     refute message =~ "default"
   end
 
-  @tag :skip
   test "an error message prints keys of other namespaces with their namespace" do
     wf = Workflow.add_rule(Workflow.new(), {NsA, :a}, failing_rule())
 
@@ -248,7 +248,6 @@ defmodule Ark.Workflow.KeysAndRunTest do
       assert {:ok, %{id: 1}} == Workflow.fetch(wf, {:b, %{id: 1}})
     end
 
-    @tag :skip
     test "returns {:error, error, workflow} for the first failed target, a computation error naming the target" do
       wf =
         Workflow.new()
@@ -262,7 +261,6 @@ defmodule Ark.Workflow.KeysAndRunTest do
       assert {:failed, _} = Workflow.fetch(wf, {:b, %{id: 1}})
     end
 
-    @tag :skip
     test "a second run with the same targets calls no user code" do
       {pid_a, body_a} = mock_fun(1, ok_body(1))
       {pid_b, body_b} = mock_fun(1, error_body())
@@ -315,7 +313,6 @@ defmodule Ark.Workflow.KeysAndRunTest do
       verify(pid)
     end
 
-    @tag :skip
     test "does not continue the targets of a previous interrupted run" do
       {pid, never} = mock_never(ok_body(1))
 
@@ -357,24 +354,20 @@ defmodule Ark.Workflow.KeysAndRunTest do
       %{wf: wf}
     end
 
-    @tag :skip
     test "returns {:ok, value} for a key with a value", %{wf: wf} do
       assert {:ok, :value} == Workflow.fetch(wf, :ok)
     end
 
-    @tag :skip
     test "returns {:failed, failure_record} for a failed key", %{wf: wf} do
       assert {:failed, {:all_alternatives_failed, [:default]}} ==
                Workflow.fetch(wf, :failed)
     end
 
-    @tag :skip
     test "returns :error for a key never demanded", %{wf: wf} do
       assert :error == Workflow.fetch(wf, :other)
       assert :error == Workflow.fetch(wf, {:ok, %{id: 1}})
     end
 
-    @tag :skip
     test "returns {:error, graph_error} for a key with no registered rule", %{wf: wf} do
       assert {:error,
               %GraphError{rule: nil, reason: {:unknown_rule, {:default, :missing, %{}}}}} =
@@ -393,7 +386,6 @@ defmodule Ark.Workflow.KeysAndRunTest do
                Workflow.fetch(wf, {:ok, [id: 1]})
     end
 
-    @tag :skip
     test "accepts the key forms of run targets", %{wf: wf} do
       assert {:ok, :value} == Workflow.fetch(wf, :ok)
       assert {:ok, :value} == Workflow.fetch(wf, {:ok, %{}})

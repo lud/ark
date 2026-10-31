@@ -159,7 +159,6 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
       assert [%{}, %{"alias" => :va, b: :vb}, %{}] == List.last(calls(pid))
     end
 
-    @tag :skip
     test "is not called when a dependency to its left is failed" do
       {pid, never} = mock_never(fn _, _, _ -> :a end)
       wf = Workflow.add_rule(base_graph(), :r, rule([:a, :fail, never], ok_body(1)))
@@ -277,7 +276,6 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
                Workflow.attempts(wf, :r)
     end
 
-    @tag :skip
     test "as an alias map are demanded in ordered-iterator order, with the same short-circuit" do
       log = start_log()
 
