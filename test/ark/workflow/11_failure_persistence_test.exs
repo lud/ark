@@ -42,7 +42,6 @@ defmodule Ark.Workflow.FailurePersistenceTest do
     rule([fn _, _, _ -> "invalid" end], ok_body(1))
   end
 
-  @tag :skip
   test "a failure is scoped to the exact key" do
     log = start_log()
 

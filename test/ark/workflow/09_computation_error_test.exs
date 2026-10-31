@@ -53,7 +53,6 @@ defmodule Ark.Workflow.ComputationErrorTest do
       %{wf: wf}
     end
 
-    @tag :skip
     test "the failure of :a points to :b only", %{wf: wf} do
       {_, wf} = run_failed(wf, [:a])
       assert {:ok, %{default: {:dep_failed, key(:b)}}} == Workflow.attempts(wf, :a)
@@ -84,7 +83,6 @@ defmodule Ark.Workflow.ComputationErrorTest do
     end
   end
 
-  @tag :skip
   test "the message of a computation error names its target" do
     wf =
       Workflow.new()
@@ -229,7 +227,6 @@ defmodule Ark.Workflow.ComputationErrorTest do
              end)
   end
 
-  @tag :skip
   test "from a failed key, fetch and attempts walk the dep_failed records down to the leaf" do
     wf =
       Workflow.new()

@@ -19,7 +19,6 @@ defmodule Ark.Workflow.EvaluationOrderTest do
   end
 
   describe "within an alternative, dependencies are resolved left to right" do
-    @tag :skip
     test "the first failed dependency fails the alternative with {:dep_failed, dep_key}, without calling the body nor demanding the dependencies to its right" do
       {body_pid, never_body} = mock_never(ok_body(1))
       {c_pid, never_c} = mock_never(ok_body(1))
@@ -88,7 +87,6 @@ defmodule Ark.Workflow.EvaluationOrderTest do
       assert :a2 == fetch!(wf, :a)
     end
 
-    @tag :skip
     test "an alternative whose dependency is already failed fails without calling its body, and the next alternative is entered" do
       {a1_pid, never} = mock_never(ok_body(:a1))
       {b_pid, b_body} = mock_fun(1, error_body())
@@ -112,7 +110,6 @@ defmodule Ark.Workflow.EvaluationOrderTest do
       assert {:ok, %{a1: {:dep_failed, {:default, :b, %{}}}}} == Workflow.attempts(wf, :a)
     end
 
-    @tag :skip
     test "no alternative is entered once one succeeded" do
       {deps_pid, never_deps} = mock_never(fn _, _, _ -> :b end)
       {body_pid, never_body} = mock_never(ok_body(:r2))
@@ -164,7 +161,6 @@ defmodule Ark.Workflow.EvaluationOrderTest do
             }} = Workflow.attempts(wf, :r)
   end
 
-  @tag :skip
   test "a consumer of a failed key fails with {:dep_failed, key}, transitively up to the target" do
     wf =
       Workflow.new()
