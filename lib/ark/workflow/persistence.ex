@@ -133,12 +133,16 @@ defmodule Ark.Workflow.Persistence do
     %{"t" => "dep_failed", "key" => enc_key(key)}
   end
 
-  defp enc_record({:computation_error, %{at: at, kind: kind, message: message}}) do
+  defp enc_record(
+         {:computation_error,
+          %{at: at, kind: kind, message: message, stacktrace: stacktrace}}
+       ) do
     %{
       "t" => "computation_error",
       "at" => DateTime.to_unix(at, :microsecond),
       "kind" => Atom.to_string(kind),
-      "message" => Codec.encode(message)
+      "message" => Codec.encode(message),
+      "stacktrace" => Codec.encode(stacktrace)
     }
   end
 
@@ -321,7 +325,13 @@ defmodule Ark.Workflow.Persistence do
   end
 
   defp dec_record(
-         %{"t" => "computation_error", "at" => at, "kind" => kind, "message" => message},
+         %{
+           "t" => "computation_error",
+           "at" => at,
+           "kind" => kind,
+           "message" => message,
+           "stacktrace" => stacktrace
+         },
          _alts,
          _index
        )
@@ -331,6 +341,7 @@ defmodule Ark.Workflow.Persistence do
        at: DateTime.from_unix!(at, :microsecond),
        kind: Map.fetch!(@kinds, kind),
        message: Codec.decode(message),
+       stacktrace: Codec.decode(stacktrace),
        reason: nil
      }}
   end
