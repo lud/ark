@@ -88,7 +88,11 @@ defmodule Ark.Workflow do
         {:ok, %{wf | stack: [], store: store}}
 
       {:failed, key, store} ->
-        {:error, %ComputationError{}, %{wf | stack: [], store: store}} |> dbg()
+        store |> dbg()
+        ce = %ComputationError{target: key, causes: :foo}
+
+        {:error, ce, %{wf | stack: [], store: store}}
+        |> dbg()
     end
   catch
     {:stop_run, e, wf} -> {:error, e, wf}
