@@ -291,12 +291,10 @@ defmodule Ark.Workflow do
   end
 
   defp validate_dep(aliases) when is_map(aliases) and not is_struct(aliases) do
-    Enum.reduce_while(aliases, {:ok, aliases}, fn {_, dep}, ok ->
-      case validate_static_key(dep) do
-        {:ok, _} -> {:cont, ok}
-        {:error, reason} -> {:halt, {:error, %GraphError{reason: reason}}}
-      end
-    end)
+    case validate_static_keys(Map.values(aliases)) do
+      :ok -> {:ok, aliases}
+      {:error, reason} -> {:error, %GraphError{reason: reason}}
+    end
   end
 
   defp validate_dep(dep) do
@@ -327,6 +325,19 @@ defmodule Ark.Workflow do
 
   defp validate_static_key(other) do
     {:error, {:invalid_key, other}}
+  end
+
+  defp validate_static_keys(keys) do
+    first_error(keys, &validate_static_key/1)
+  end
+
+  defp first_error(items, check) do
+    Enum.find_value(items, :ok, fn item ->
+      case check.(item) do
+        {:error, _} = err -> err
+        _ -> nil
+      end
+    end)
   end
 
   defp validate_params(params) do
@@ -507,6 +518,11 @@ defmodule Ark.Workflow do
         store = put_attempt(store, key, alt_key, {:dep_failed, dep_key})
         frame = frame(frame, arms: arms)
         run_loop([frame | frames], store, wf)
+
+      {:error, :bad_return, reason} ->
+        {ns, name, _} = key
+        e = %GraphError{rule: {ns, name}, key: key, alternative: alt_key, reason: reason}
+        throw({:stop_run, e, %{wf | stack: [], store: store}})
     end
   end
 
@@ -582,8 +598,8 @@ defmodule Ark.Workflow do
           _ -> {:needy, arm}
         end
 
-      {:error, :dep_failed, dep} ->
-        {:error, :dep_failed, dep}
+      {:error, _, _} = err ->
+        err
     end
   end
 
@@ -601,64 +617,23 @@ defmodule Ark.Workflow do
     end
   end
 
-  @doc """
-  TODO deps validation normalize_deps assumes its input has already passed
-  validate_rule!, and what a dependency function returns hasn't. The skipped 06
-  tests (06_dependency_functions_test.exs:450-562) show that the runtime check
-  also differs from the static one in a few ways.
-
-  What the runtime check has to cover:
-
-  1. Return shape. A dependency function can return a single key, an alias map,
-     or a list of keys. In a returned list, every element must be a key: [[:a]],
-     [:a, [:b]] and [%{x: :a}] are all {:invalid_key, element}, and the error
-     names the offending element. Static deps lists do allow maps and functions,
-     so normalize_deps can't be reused without a shape check first.
-  2. Each key. validate_static_key/1 already returns exactly {:invalid_key, v}
-     or {:invalid_params, v}. nil, true and false fail is_address, so they come
-     out as :invalid_key as the tests expect.
-  3. {:ok, keys}. This needs a dedicated error whose message says the keys
-     should be returned directly.
-  4. Unknown rule. prerun_check! only covers static deps, so returned keys need
-     an {:unknown_rule, fk} check at call time.
-  5. Shadowing. A returned key conflicts with anything already exposed by the
-     alternative: static deps on either side of the function, and keys returned
-     by earlier dependency functions.
-
-  All of these errors are wrapped as {:bad_return, :deps, fun, value, reason} in
-  a GraphError that stops the run, with rule, key and alternative set.
-
-  Suggested structure:
-
-  - Have check_exposed_keys/2 return {:ok, seen} instead of :ok. Then seen
-    doubles as a running record of what the alternative exposes so far.
-  - Add an exposed field to arm, initialized in new_frame from the static deps
-    of the alternative. They were validated at add_rule, so building it can't
-    conflict. This covers "static dep to its right", because the whole static
-    list is in there from the start.
-  - In the dyn clause: validate the shape and keys, normalize, check the rules
-    exist, then run check_exposed_keys(new_exposures, arm.exposed) and store the
-    returned seen back in the arm. This covers "returned by an earlier
-    dependency function", and it's where source gets used.
-
-  The shape check can be one function that returns {:ok, [dep]} or {:error,
-  reason}. It would be built from validate_static_key/1 and normalize_dep/2:
-
-  - {:ok, _}: the "return the keys directly" error.
-  - Map: validate each value as a static key, then turn the map into dep(...,
-    source: :alias) entries.
-  - List: each element must pass validate_static_key, which rejects maps and
-    nested lists. Each one becomes a dep(..., source: :key).
-  - Anything else: validate it as a single static key.
-  """
-
+  # TODO shadowing: a key returned by a dependency function must not be exposed
+  # under the same deps key as a different key already exposed by the
+  # alternative (static deps on either side of the function, and keys returned
+  # by earlier dependency functions). Suggested: have check_exposed_keys/2
+  # return {:ok, seen}, add an exposed field to arm initialized in new_frame
+  # from the static deps, and check new exposures against it in the dyn clause.
   defp do_pull_deps([dyn(callback: fun) | deps], acc, store, key, wf) do
     {ns, _, params} = key
+    value = call_dep(fun, params, acc, wf)
 
-    new_deps = call_dep(fun, params, acc, wf)
-    new_deps = normalize_deps(List.wrap(new_deps), ns)
-
-    do_pull_deps(new_deps ++ deps, acc, store, key, wf)
+    with :ok <- validate_returned_deps(value),
+         new_deps = normalize_deps(List.wrap(value), ns),
+         :ok <- first_error(new_deps, &check_known_rule(&1, wf)) do
+      do_pull_deps(new_deps ++ deps, acc, store, key, wf)
+    else
+      {:error, reason} -> {:error, :bad_return, {:bad_return, :deps, fun, value, reason}}
+    end
   end
 
   defp do_pull_deps([], acc, _store, _key, _wf) do
@@ -681,13 +656,23 @@ defmodule Ark.Workflow do
   defp call_dep(fun, params, acc, wf) do
     %{ctx: ctx} = wf
 
-    case call_impl(fun, {params, acc, ctx}) do
-      map when is_map(map) -> map
-      list when is_list(list) -> list
-      atom when is_atom(atom) -> atom
-      {ns, name, params} = t when is_atom(ns) and is_atom(name) and is_map(params) -> t
-      {name, params} = t when is_atom(name) and is_map(params) -> t
-    end
+    call_impl(fun, {params, acc, ctx})
+  end
+
+  defp validate_returned_deps({:ok, _} = value) do
+    {:error, {:invalid_key, value}}
+  end
+
+  defp validate_returned_deps(aliases) when is_map(aliases) and not is_struct(aliases) do
+    validate_static_keys(Map.values(aliases))
+  end
+
+  defp validate_returned_deps(keys) when is_list(keys) do
+    validate_static_keys(keys)
+  end
+
+  defp validate_returned_deps(key) do
+    validate_static_keys([key])
   end
 
   defp call_impl(fun, {params, acc, ctx}) when is_function(fun, 3) do
@@ -755,14 +740,22 @@ defmodule Ark.Workflow do
     end)
   end
 
-  defp check_dep!(dep(key: {ns, name, _} = key), rule_key, ak, wf) do
-    if not Map.has_key?(wf.rules, {ns, name}) do
-      e = %GraphError{rule: rule_key, alternative: ak, reason: {:unknown_rule, key}}
+  defp check_dep!(dep, rule_key, ak, wf) do
+    with {:error, reason} <- check_known_rule(dep, wf) do
+      e = %GraphError{rule: rule_key, alternative: ak, reason: reason}
       throw({:stop_run, e, wf})
     end
   end
 
-  defp check_dep!(dyn(), _rule_key, _ak, _wf) do
+  defp check_known_rule(dep(key: {ns, name, _} = key), wf) do
+    if Map.has_key?(wf.rules, {ns, name}) do
+      :ok
+    else
+      {:error, {:unknown_rule, key}}
+    end
+  end
+
+  defp check_known_rule(dyn(), _wf) do
     :ok
   end
 
