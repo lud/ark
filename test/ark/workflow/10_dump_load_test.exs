@@ -200,8 +200,8 @@ defmodule Ark.Workflow.DumpLoadTest do
       Workflow.new()
       |> Workflow.add_rule(:a, %{
         alts: [
-          first: %{deps: [], body: error_body()},
-          second: %{deps: [:broken], body: body}
+          a1: %{deps: [], body: error_body()},
+          a2: %{deps: [:broken], body: body}
         ]
       })
       |> Workflow.add_rule(:broken, broken)
@@ -209,7 +209,7 @@ defmodule Ark.Workflow.DumpLoadTest do
 
     broken = rule([fn _, _, _ -> "invalid" end], ok_body(1))
     {:error, %GraphError{}, wf} = Workflow.run(graph.(broken), [{:a, params}])
-    assert {:ok, %{first: _}} = Workflow.attempts(wf, {:a, params})
+    assert {:ok, %{a1: _}} = Workflow.attempts(wf, {:a, params})
 
     wf = roundtrip(wf, graph.(const_rule(:fixed)))
     wf = run!(wf, [{:a, params}])
@@ -227,8 +227,8 @@ defmodule Ark.Workflow.DumpLoadTest do
       |> Workflow.add_rule(:b, failing_rule())
       |> Workflow.add_rule(:c, %{
         alts: [
-          one: %{deps: [], body: error_body()},
-          two: %{deps: [], body: params_body()}
+          c1: %{deps: [], body: error_body()},
+          c2: %{deps: [], body: params_body()}
         ]
       })
       |> Workflow.add_rule({NsA, :removed}, const_rule(%{"json" => true}))
@@ -278,8 +278,8 @@ defmodule Ark.Workflow.DumpLoadTest do
       Workflow.new()
       |> Workflow.add_rule(:a, %{
         alts: [
-          one: %{deps: [:b], body: ok_body(1)},
-          two: %{deps: [], body: fn _, _, _ -> raise "boom" end}
+          a1: %{deps: [:b], body: ok_body(1)},
+          a2: %{deps: [], body: fn _, _, _ -> raise "boom" end}
         ]
       })
       |> Workflow.add_rule(:b, failing_rule(%{reason: "x"}))
@@ -482,17 +482,17 @@ defmodule Ark.Workflow.DumpLoadTest do
       graph =
         Workflow.add_rule(Workflow.new(), :r, %{
           alts: [
-            first: %{
+            r1: %{
               deps: [],
               body: fn %{n: n}, _, _ ->
                 if n == 1 do
-                  {:ok, :first}
+                  {:ok, :r1}
                 else
                   {:error, :x}
                 end
               end
             },
-            second: %{deps: [], body: ok_body(:second)}
+            r2: %{deps: [], body: ok_body(:r2)}
           ],
           dump: fn v -> %{"v" => Atom.to_string(v)} end,
           load: fn %{"v" => v} -> {:loaded, v} end
@@ -501,8 +501,8 @@ defmodule Ark.Workflow.DumpLoadTest do
       wf = run!(graph, [{:r, %{n: 1}}, {:r, %{n: 2}}])
       wf = roundtrip(wf, graph)
 
-      assert {:loaded, "first"} == fetch!(wf, {:r, %{n: 1}})
-      assert {:loaded, "second"} == fetch!(wf, {:r, %{n: 2}})
+      assert {:loaded, "r1"} == fetch!(wf, {:r, %{n: 1}})
+      assert {:loaded, "r2"} == fetch!(wf, {:r, %{n: 2}})
     end
 
     test "given as tuples are called with the value, or the data, before extra_args" do
@@ -751,8 +751,8 @@ defmodule Ark.Workflow.DumpLoadTest do
       |> Workflow.add_rule(:b, const_rule(:vb))
       |> Workflow.add_rule(:r, %{
         alts: [
-          first: %{deps: [], body: first_body},
-          second: %{deps: [:a, deps_fun], body: deps_body()}
+          r1: %{deps: [], body: first_body},
+          r2: %{deps: [:a, deps_fun], body: deps_body()}
         ]
       })
     end

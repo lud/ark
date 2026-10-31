@@ -54,13 +54,13 @@ defmodule Ark.Workflow.ClearFailureTest do
       wf =
         Workflow.add_rule(Workflow.new(), :a, %{
           alts: [
-            one: %{deps: [], body: tracked(log, :one, {:error, :x})},
-            two: %{deps: [], body: switch_body(sw, log, :two)}
+            a1: %{deps: [], body: tracked(log, :a1, {:error, :x})},
+            a2: %{deps: [], body: switch_body(sw, log, :a2)}
           ]
         })
 
       {:error, %ComputationError{}, wf} = Workflow.run(wf, [:a])
-      assert [:one, :two] == logged(log)
+      assert [:a1, :a2] == logged(log)
 
       assert {:ok, wf} = Workflow.clear_failure(wf, :a)
       assert :error == Workflow.fetch(wf, :a)
@@ -69,8 +69,8 @@ defmodule Ark.Workflow.ClearFailureTest do
       fix(sw)
       wf = run!(wf, [:a])
 
-      assert [:one, :two, :one, :two] == logged(log)
-      assert :two == fetch!(wf, :a)
+      assert [:a1, :a2, :a1, :a2] == logged(log)
+      assert :a2 == fetch!(wf, :a)
     end
 
     test "lets a deploy-added alternative run" do
@@ -78,13 +78,13 @@ defmodule Ark.Workflow.ClearFailureTest do
 
       v1 =
         Workflow.add_rule(Workflow.new(), :a, %{
-          alts: [one: %{deps: [], body: tracked(log, :one, {:error, :x})}]
+          alts: [a1: %{deps: [], body: tracked(log, :a1, {:error, :x})}]
         })
 
       v2 =
         Workflow.add_rule(Workflow.new(), :a, %{
           alts: [
-            one: %{deps: [], body: tracked(log, :one, {:error, :x})},
+            a1: %{deps: [], body: tracked(log, :a1, {:error, :x})},
             added: %{deps: [], body: tracked(log, :added, {:ok, :added})}
           ]
         })
@@ -96,7 +96,7 @@ defmodule Ark.Workflow.ClearFailureTest do
       assert {:ok, wf} = Workflow.clear_failure(wf, :a)
       wf = run!(wf, [:a])
 
-      assert [:one, :one, :added] == logged(log)
+      assert [:a1, :a1, :added] == logged(log)
       assert :added == fetch!(wf, :a)
     end
 
@@ -364,8 +364,8 @@ defmodule Ark.Workflow.ClearFailureTest do
         |> Workflow.add_rule(:fail, failing_rule())
         |> Workflow.add_rule(:in_progress, %{
           alts: [
-            first: %{deps: [], body: error_body()},
-            second: %{deps: [fn _, _, _ -> "invalid" end], body: ok_body(1)}
+            in_progress1: %{deps: [], body: error_body()},
+            in_progress2: %{deps: [fn _, _, _ -> "invalid" end], body: ok_body(1)}
           ]
         })
 

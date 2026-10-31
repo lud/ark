@@ -132,28 +132,28 @@ defmodule Ark.Workflow.CyclesTest do
       Workflow.new()
       |> Workflow.add_rule(:a, %{
         alts: [
-          one: %{
+          a1: %{
             deps: [],
             body: fn _, _, _ ->
-              track(log, :one)
+              track(log, :a1)
               first_result
             end
           },
-          two: %{deps: [:b], body: ok_body(:two)}
+          a2: %{deps: [:b], body: ok_body(:a2)}
         ]
       })
       |> Workflow.add_rule(:b, rule([:a], ok_body(1)))
     end
 
-    wf = run!(cyclic.({:ok, :one}), [:a])
-    assert :one == fetch!(wf, :a)
+    wf = run!(cyclic.({:ok, :a1}), [:a])
+    assert :a1 == fetch!(wf, :a)
 
     {e, wf} = assert_cycle(cyclic.({:error, :x}), [:a])
     assert {:cycle, key(:a), [key(:a), key(:b)]} == e.reason
     assert %GraphError{key: {:default, :b, %{}}, alternative: :default} = e
-    assert [:one, :one] == logged(log)
+    assert [:a1, :a1] == logged(log)
     assert :error == Workflow.fetch(wf, :a)
-    assert {:ok, %{one: {:computation_error, _}}} = Workflow.attempts(wf, :a)
+    assert {:ok, %{a1: {:computation_error, _}}} = Workflow.attempts(wf, :a)
   end
 
   test "a rule demanding itself with other params is not a cycle" do

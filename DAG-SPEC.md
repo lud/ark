@@ -1264,6 +1264,12 @@ term at fault, and `rule`, `key` and `alternative` when the error sets
 them. A test of a message checks only what the formatter adds: hints,
 and how keys are printed.
 
+The alternatives of a rule `:a` are named `:a1`, `:a2`, ... in their list
+order, and a rule with a single alternative uses `:default`. A test keeps
+a descriptive name when the name is what it checks (an alternative named
+after the kind of its failure, an alternative added or removed by a
+deploy, a list order that is not alphabetical).
+
 The suite may be split into files by topic, numbered in a useful reading
 order (`01_graph_building_test.exs`, `02_keys_test.exs`, ...). Test
 helpers in `test/support` are left to the implementor.

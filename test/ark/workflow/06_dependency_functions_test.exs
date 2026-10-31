@@ -380,16 +380,16 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
       wf =
         Workflow.add_rule(base_graph(), :r, %{
           alts: [
-            first: %{deps: [:a, deps_fun], body: never},
-            second: %{deps: [], body: ok_body(:second)}
+            r1: %{deps: [:a, deps_fun], body: never},
+            r2: %{deps: [], body: ok_body(:r2)}
           ]
         })
 
       wf = run!(wf, [:r])
 
       verify(pid)
-      assert :second == fetch!(wf, :r)
-      assert {:ok, %{first: {:computation_error, cleaned}}} = Workflow.attempts(wf, :r)
+      assert :r2 == fetch!(wf, :r)
+      assert {:ok, %{r1: {:computation_error, cleaned}}} = Workflow.attempts(wf, :r)
       cleaned
     end
 
@@ -418,8 +418,8 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
         |> Workflow.add_rule(:a, rule([], a_body))
         |> Workflow.add_rule(:r, %{
           alts: [
-            first: %{deps: [], body: error_body()},
-            second: %{deps: [:a, fn _, _, _ -> "invalid" end], body: ok_body(1)}
+            r1: %{deps: [], body: error_body()},
+            r2: %{deps: [:a, fn _, _, _ -> "invalid" end], body: ok_body(1)}
           ]
         })
         |> Workflow.add_rule(:top, rule([{:r, %{id: 1}}], ok_body(1)))
@@ -434,7 +434,7 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
       assert {:bad_return, :deps, _, "invalid", {:invalid_key, "invalid"}} = e.reason
       assert {:default, :r} == e.rule
       assert {:default, :r, %{id: 1}} == e.key
-      assert :second == e.alternative
+      assert :r2 == e.alternative
     end
 
     test "returned with the workflow and every fact recorded before", %{
@@ -446,7 +446,7 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
       verify(a_pid)
       assert {:ok, :va} == Workflow.fetch(wf, :a)
 
-      assert {:ok, %{first: {:computation_error, _}}} =
+      assert {:ok, %{r1: {:computation_error, _}}} =
                Workflow.attempts(wf, {:r, %{id: 1}})
     end
 
@@ -455,7 +455,7 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
 
       assert :error == Workflow.fetch(wf, {:r, %{id: 1}})
       assert {:ok, attempts} = Workflow.attempts(wf, {:r, %{id: 1}})
-      refute Map.has_key?(attempts, :second)
+      refute Map.has_key?(attempts, :r2)
       assert :error == Workflow.fetch(wf, :top)
       assert {:ok, %{}} == Workflow.attempts(wf, :top)
     end
@@ -665,8 +665,8 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
       wf =
         Workflow.add_rule(Workflow.new(), :in_progress, %{
           alts: [
-            first: %{deps: [], body: error_body()},
-            second: %{deps: [fn _, _, _ -> "not a key" end], body: ok_body(1)}
+            in_progress1: %{deps: [], body: error_body()},
+            in_progress2: %{deps: [fn _, _, _ -> "not a key" end], body: ok_body(1)}
           ]
         })
 
@@ -679,7 +679,7 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
     test "returns :error for a key with attempts but no result", %{wf: wf} do
       assert :error == Workflow.fetch(wf, :in_progress)
 
-      assert {:ok, %{first: {:computation_error, _}}} =
+      assert {:ok, %{in_progress1: {:computation_error, _}}} =
                Workflow.attempts(wf, :in_progress)
     end
   end

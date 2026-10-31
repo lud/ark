@@ -46,20 +46,16 @@ defmodule Ark.Workflow.ComputationErrorTest do
     setup do
       wf =
         Workflow.new()
-        |> Workflow.add_rule(:a, %{alts: [main: %{deps: [:b], body: ok_body(1)}]})
-        |> Workflow.add_rule(:b, %{
-          alts: [main: %{deps: [{:c, %{id: 1}}], body: ok_body(1)}]
-        })
-        |> Workflow.add_rule(:c, %{
-          alts: [main: %{deps: [], body: error_body(:leaf_reason)}]
-        })
+        |> Workflow.add_rule(:a, rule([:b], ok_body(1)))
+        |> Workflow.add_rule(:b, rule([{:c, %{id: 1}}], ok_body(1)))
+        |> Workflow.add_rule(:c, failing_rule(:leaf_reason))
 
       %{wf: wf}
     end
 
     test "the failure of :a points to :b only", %{wf: wf} do
       {_, wf} = run_failed(wf, [:a])
-      assert {:ok, %{main: {:dep_failed, key(:b)}}} == Workflow.attempts(wf, :a)
+      assert {:ok, %{default: {:dep_failed, key(:b)}}} == Workflow.attempts(wf, :a)
     end
 
     test "the failures of target :a hold the records of :a, :b and :c, each pointing one level down, and the error of :c as the root cause",
@@ -69,16 +65,17 @@ defmodule Ark.Workflow.ComputationErrorTest do
       assert key(:a) == e.target
 
       assert %{
-               key(:a) => %{main: {:dep_failed, key(:b)}},
-               key(:b) => %{main: {:dep_failed, key(:c, %{id: 1})}},
-               key(:c, %{id: 1}) => %{main: {:computation_error, :leaf_reason}}
+               key(:a) => %{default: {:dep_failed, key(:b)}},
+               key(:b) => %{default: {:dep_failed, key(:c, %{id: 1})}},
+               key(:c, %{id: 1}) => %{default: {:computation_error, :leaf_reason}}
              } == outline(failures!(wf, e.target))
 
       c = key(:c, %{id: 1})
 
       assert %{
                ^c => %{
-                 main: {:computation_error, %{kind: :user_term, message: ":leaf_reason"}}
+                 default:
+                   {:computation_error, %{kind: :user_term, message: ":leaf_reason"}}
                }
              } =
                failures!(wf, e.target)
@@ -100,16 +97,16 @@ defmodule Ark.Workflow.ComputationErrorTest do
       Workflow.new()
       |> Workflow.add_rule(:a, %{
         alts: [
-          first: %{deps: [:b], body: ok_body(1)},
-          second: %{deps: [], body: error_body(:a_reason)},
-          third: %{deps: [:mid], body: ok_body(1)}
+          a1: %{deps: [:b], body: ok_body(1)},
+          a2: %{deps: [], body: error_body(:a_reason)},
+          a3: %{deps: [:mid], body: ok_body(1)}
         ]
       })
       |> Workflow.add_rule(:b, failing_rule(:b_reason))
       |> Workflow.add_rule(:mid, %{
         alts: [
-          x: %{deps: [:c], body: ok_body(1)},
-          y: %{deps: [], body: fn _, _, _ -> raise "mid raise" end}
+          mid1: %{deps: [:c], body: ok_body(1)},
+          mid2: %{deps: [], body: fn _, _, _ -> raise "mid raise" end}
         ]
       })
       |> Workflow.add_rule(:c, failing_rule(:c_reason))
@@ -118,14 +115,14 @@ defmodule Ark.Workflow.ComputationErrorTest do
 
     assert %{
              key(:a) => %{
-               first: {:dep_failed, key(:b)},
-               second: {:computation_error, :a_reason},
-               third: {:dep_failed, key(:mid)}
+               a1: {:dep_failed, key(:b)},
+               a2: {:computation_error, :a_reason},
+               a3: {:dep_failed, key(:mid)}
              },
              key(:b) => %{default: {:computation_error, :b_reason}},
              key(:mid) => %{
-               x: {:dep_failed, key(:c)},
-               y: {:computation_error, %RuntimeError{message: "mid raise"}}
+               mid1: {:dep_failed, key(:c)},
+               mid2: {:computation_error, %RuntimeError{message: "mid raise"}}
              },
              key(:c) => %{default: {:computation_error, :c_reason}}
            } == outline(failures!(wf, e.target))
@@ -136,8 +133,8 @@ defmodule Ark.Workflow.ComputationErrorTest do
       Workflow.new()
       |> Workflow.add_rule(:a, %{
         alts: [
-          one: %{deps: [:b], body: ok_body(1)},
-          two: %{deps: [:c], body: ok_body(1)}
+          a1: %{deps: [:b], body: ok_body(1)},
+          a2: %{deps: [:c], body: ok_body(1)}
         ]
       })
       |> Workflow.add_rule(:c, rule([:b], ok_body(1)))
@@ -146,7 +143,7 @@ defmodule Ark.Workflow.ComputationErrorTest do
     {e, wf} = run_failed(wf, [:a])
 
     assert %{
-             key(:a) => %{one: {:dep_failed, key(:b)}, two: {:dep_failed, key(:c)}},
+             key(:a) => %{a1: {:dep_failed, key(:b)}, a2: {:dep_failed, key(:c)}},
              key(:c) => %{default: {:dep_failed, key(:b)}},
              key(:b) => %{default: {:computation_error, :b_reason}}
            } == outline(failures!(wf, e.target))
@@ -177,8 +174,8 @@ defmodule Ark.Workflow.ComputationErrorTest do
       |> Workflow.add_rule(:a, rule([:b], error_body(:a_reason)))
       |> Workflow.add_rule(:b, %{
         alts: [
-          first: %{deps: [], body: error_body(:b_reason)},
-          second: %{deps: [], body: ok_body(1)}
+          b1: %{deps: [], body: error_body(:b_reason)},
+          b2: %{deps: [], body: ok_body(1)}
         ]
       })
 
@@ -302,8 +299,8 @@ defmodule Ark.Workflow.ComputationErrorTest do
         |> Workflow.add_rule(:fail, failing_rule())
         |> Workflow.add_rule(:in_progress, %{
           alts: [
-            first: %{deps: [], body: error_body()},
-            second: %{deps: [fn _, _, _ -> "invalid" end], body: ok_body(1)}
+            in_progress1: %{deps: [], body: error_body()},
+            in_progress2: %{deps: [fn _, _, _ -> "invalid" end], body: ok_body(1)}
           ]
         })
 

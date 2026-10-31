@@ -107,20 +107,20 @@ defmodule Ark.Workflow.FailurePersistenceTest do
 
     test "when a deploy adds alternatives to its rule" do
       log = start_log()
-      v1 = graph_with(:a, alts_rule([alt(log, :one, {:error, :x})]))
+      v1 = graph_with(:a, alts_rule([alt(log, :a1, {:error, :x})]))
 
       v2 =
         graph_with(
           :a,
-          alts_rule([alt(log, :one, {:error, :x}), alt(log, :two, {:ok, 2})])
+          alts_rule([alt(log, :a1, {:error, :x}), alt(log, :a2, {:ok, 2})])
         )
 
       {:error, %ComputationError{}, wf} = Workflow.run(v1, [:a])
       wf = roundtrip(wf, v2)
       {:error, %ComputationError{}, wf} = Workflow.run(wf, [:a])
 
-      assert [:one] == logged(log)
-      assert {:failed, {:all_alternatives_failed, [:one]}} == Workflow.fetch(wf, :a)
+      assert [:a1] == logged(log)
+      assert {:failed, {:all_alternatives_failed, [:a1]}} == Workflow.fetch(wf, :a)
     end
   end
 
@@ -154,30 +154,30 @@ defmodule Ark.Workflow.FailurePersistenceTest do
       v1 =
         graph_with(
           :a,
-          alts_rule([alt(log, :one, {:error, :x}), alt(log, :two, {:ok, :two})])
+          alts_rule([alt(log, :a1, {:error, :x}), alt(log, :a2, {:ok, :a2})])
         )
 
       wf = run!(v1, [:a])
-      assert [:one, :two] == logged(log)
+      assert [:a1, :a2] == logged(log)
 
       for alts <- [
             [
-              alt(log, :zero, {:ok, :zero}),
-              alt(log, :one, {:error, :x}),
-              alt(log, :two, {:ok, :two})
+              alt(log, :a0, {:ok, :a0}),
+              alt(log, :a1, {:error, :x}),
+              alt(log, :a2, {:ok, :a2})
             ],
-            [alt(log, :one, {:error, :x})],
-            [alt(log, :two, {:ok, :two}), alt(log, :one, {:error, :x})],
+            [alt(log, :a1, {:error, :x})],
+            [alt(log, :a2, {:ok, :a2}), alt(log, :a1, {:error, :x})],
             [alt(log, :other, {:ok, :other})]
           ] do
         capture_log(fn ->
           loaded = roundtrip(wf, graph_with(:a, alts_rule(alts)))
           loaded = run!(loaded, [:a])
-          assert :two == fetch!(loaded, :a)
+          assert :a2 == fetch!(loaded, :a)
         end)
       end
 
-      assert [:one, :two] == logged(log)
+      assert [:a1, :a2] == logged(log)
     end
   end
 
