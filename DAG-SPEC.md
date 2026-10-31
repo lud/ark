@@ -571,10 +571,11 @@ original term, so user code can match on the cause of a failure.
 
 ```
 cleaned_error :: %{
-  at:      DateTime (ISO-8601 in serialized form),
-  kind:    :error | :throw | :exit | :user_term | :bad_return,
-  message: binary,      # human-readable formatted message (+ stacktrace for crashes)
-  reason:  term | nil   # the original term, runtime only
+  at:         DateTime (ISO-8601 in serialized form),
+  kind:       :error | :throw | :exit | :user_term | :bad_return,
+  message:    binary,       # human-readable formatted message
+  stacktrace: binary | nil, # formatted stacktrace, without arguments, for crashes
+  reason:     term | nil    # the original term, runtime only
 }
 ```
 
@@ -584,7 +585,7 @@ below). `reason` is the original term:
 | `kind`        | `reason`                                                     |
 |---------------|--------------------------------------------------------------|
 | `:user_term`  | the `reason` of the returned `{:error, reason}`              |
-| `:error`      | the exception struct, normalized with `Exception.normalize/3` as for the message; no stacktrace, the message holds it |
+| `:error`      | the exception struct, normalized with `Exception.normalize/3`; the stacktrace is in `stacktrace` |
 | `:throw`      | the thrown value                                             |
 | `:exit`       | the exit reason                                              |
 | `:bad_return` | the returned value                                           |
@@ -598,21 +599,30 @@ or references does not prevent a dump.
 
 The engine — never user code — normalizes failures at the boundary:
 
-- `{:error, reason}` returned → `kind: :user_term`. No stacktrace (a
-  controlled return is not a crash). Message: `Exception.message(reason)`
-  if `reason` is an exception struct, else `inspect(reason)`. The wrap
-  itself is the `:user_term` signal — it is the only case that wraps.
+- `{:error, reason}` returned → `kind: :user_term`. The wrap itself is
+  the `:user_term` signal — it is the only case that wraps.
 - any other return from a body, or from a middleware wrapping a body →
-  `kind: :bad_return`. No stacktrace. The message holds the returned
-  value, through `inspect`.
+  `kind: :bad_return`.
 - raise → `kind: :error`; caught throw → `:throw`; caught exit → `:exit`.
-  Message via `Exception.blame/3` then `Exception.format/3` (message +
-  formatted stacktrace), as Oban does.
+
+The message is `Ark.Error.to_string(term)`, for the `:private` audience:
+the term is `{exception, stacktrace}` for kind `:error`, so the message
+names the exception module, and the `reason` for every other kind. A
+string reason is its own message, and an exception reason gives its
+`Exception.message/1`.
+
+`stacktrace` is `nil` for `:user_term` and `:bad_return`: a returned
+value is not a crash. For `:error`, `:throw` and `:exit`, it is the
+stacktrace formatted with `Exception.format_stacktrace/1`, with the
+arguments of every frame replaced by their arity. Arguments hold user
+data (params, dependency values, context) that would otherwise be
+persisted with the state.
 
 User code stays trivial: return `{:error, whatever}` and the engine does
-the rest. Errors are for humans fixing and debugging; a user who needs
-rich failure messages defines domain exceptions (optionally with a
-`blame/2` callback to enrich formatting).
+the rest. Errors are for humans fixing and debugging, so both fields are
+meant for developers, not for end users. A user who needs rich failure
+messages defines domain exceptions, or `{module, tag, data}` reasons
+formatted by `module.format_reason/3` (see `Ark.Error`).
 
 ### Scoping and persistence of failures
 
@@ -702,7 +712,7 @@ names, as strings, which can be JSON object keys:
 
 (Field names are illustrative.) `result` is absent for a key with
 attempts but no outcome yet. A cleaned error is dumped with its `at`,
-`kind` and `message`, never its `reason` (§7). Failure records reference other keys with
+`kind`, `message` and `stacktrace`, never its `reason` (§7). Failure records reference other keys with
 the same key object. A dump holding two entries for the same key is
 invalid. Load decodes the keys and rebuilds the live maps in one pass.
 
@@ -1460,20 +1470,21 @@ helpers in `test/support` are left to the implementor.
 - A body returning `{:error, reason}` fails the alternative...
   - ...with kind `:user_term` and no stacktrace
   - ...with the exception message when `reason` is an exception struct
-  - ...with `inspect(reason)` when `reason` is any other term
+  - ...with the `Ark.Error` rendering of `reason` for any other term
 - A body returning anything else fails the alternative with kind
-  `:bad_return`, no stacktrace, and a message holding the returned value
+  `:bad_return`, no stacktrace, and the `Ark.Error` rendering of the
+  returned value as message
 - A body that...
-  - ...raises fails the alternative with kind `:error`, the message and a
-    formatted stacktrace
+  - ...raises fails the alternative with kind `:error`, a message naming
+    the exception, and a formatted stacktrace
   - ...matches on unexpected params and raises `FunctionClauseError` is
-    caught like any raise
+    caught like any raise, with no argument value in its message or
+    stacktrace
   - ...throws fails the alternative with kind `:throw`
   - ...exits fails the alternative with kind `:exit`, also with reason
     `:normal`
 - An exception whose `message/1` raises, returned or raised, still yields
   a cleaned error
-- A user exception's `blame/2` callback enriches its formatted message
 - Every cleaned error carries the time it was recorded
 - The `reason` of a cleaned error is the original term...
   - ...the `reason` of `{:error, reason}` for kind `:user_term`
@@ -1755,7 +1766,7 @@ helpers in `test/support` are left to the implementor.
 - Dumping a loaded state that was not run produces the same data as the
   original dump, including undecodable keys *(fixed dump)*
 - A failure record queried after a round trip equals the one before,
-  including its time, kind and message, apart from the `reason` of its
+  including its time, kind, message and stacktrace, apart from the `reason` of its
   cleaned error, `nil` after the load
 - A cleaned error whose `reason` holds a pid or a function does not make
   `dump` fail
