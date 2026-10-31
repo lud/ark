@@ -1,15 +1,13 @@
 defmodule Ark.Workflow.ComputationError do
-  defexception [:message, :target, :causes]
+  defexception [:message, :target]
 
-  @type cause :: %{key: tuple, alternative: atom | binary, error: map}
-  @type t :: %__MODULE__{message: String.t(), target: tuple, causes: [cause]}
+  @type t :: %__MODULE__{message: String.t(), target: tuple}
 
   @doc false
-  def new(target, causes, tree) do
+  def new(target) do
     %__MODULE__{
-      message: "could not compute #{Ark.Workflow.format_key(target)}:\n" <> tree,
-      target: target,
-      causes: causes
+      message: "could not compute #{Ark.Workflow.format_key(target)}",
+      target: target
     }
   end
 end

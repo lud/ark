@@ -197,8 +197,7 @@ defmodule Ark.Workflow.Persistence do
 
   def load(%Workflow{} = wf, %{"version" => @version, "entries" => entries})
       when is_list(entries) do
-    index =
-      Map.new(wf.rules, fn {{ns, name}, _} -> {{str(ns), str(name)}, {ns, name}} end)
+    index = rule_index(wf)
 
     {values, failed, attempts, orphans} =
       Enum.reduce(entries, {%{}, %{}, %{}, %{}}, &load_entry(&1, wf, index, &2))
@@ -215,6 +214,22 @@ defmodule Ark.Workflow.Persistence do
 
   def load(_wf, data) do
     {:error, malformed("unexpected data: #{inspect(data, limit: 5)}")}
+  end
+
+  def orphan_failed_attempts(%Workflow{} = wf, {ns, name, params}) do
+    id = {str(ns), str(name), Codec.encode(params)}
+
+    case wf.orphans do
+      %{^id => %{"failure" => _} = entry} ->
+        {:ok, dec_attempts(Map.get(entry, "attempts", []), %{}, rule_index(wf))}
+
+      _ ->
+        :error
+    end
+  end
+
+  defp rule_index(wf) do
+    Map.new(wf.rules, fn {{ns, name}, _} -> {{str(ns), str(name)}, {ns, name}} end)
   end
 
   defp malformed(reason) do
