@@ -306,10 +306,12 @@ value of `:a` under `:a` and `{:a, %{}}`. Two **different** keys of one
 alternative exposed under the same `deps` key are an error, including an
 alias that shadows the written form of another dependency.
 The reason of the graph error is `{:shadowing, exposure, exposure}`
-(§9), so its message can call out the shadowing. It is rejected by `add_rule`, or is a graph error when a
-dependency function returns it (§5). Each alternative has its own `deps`
-map: two alternatives of one rule may use the same alias for different
-keys.
+(§9), so its message can call out the shadowing. Between static
+dependencies, it is rejected by `add_rule`. When a dependency function
+returns one of the two keys, it is a graph error found during the run,
+when dependency resolution reaches the second exposure (§5). Each
+alternative has its own `deps` map: two alternatives of one rule may use
+the same alias for different keys.
 
 ### Computation function signature
 
@@ -457,9 +459,7 @@ graph structure.
     any other term that is not a key, a list of keys or an alias map;
   - `{:invalid_params, given}`, for a key with invalid params (§3);
   - `{:unknown_rule, key}`, for a key with no registered rule, even when
-    the state holds records for it (§3);
-  - `{:shadowing, exposure, exposure}`, for a key exposed under the same
-    `deps` key as a different key of the alternative (§4).
+    the state holds records for it (§3).
 
   `{:ok, keys}` reads as a key of rule `:ok`: invalid params for a list
   or an atom, an unknown rule for a map. Whatever its key reason, its
@@ -468,6 +468,14 @@ graph structure.
   data (e.g. `{:account, %{id: id}}` for a deleted account) is a
   normal dependency: the key is computed, fails, and the alternative fails
   via `dep_failed`.
+- A returned key exposed under the same `deps` key as a different key of
+  the alternative (§4) is a graph error with reason
+  `{:shadowing, exposure, exposure}`. It is found when dependency
+  resolution reaches the second exposure, whether that is the returned
+  key or a static dependency to the right of the function. The
+  dependencies between the two exposures are demanded as usual before
+  that point: when one of them fails, the alternative fails with
+  `dep_failed` and the shadowing is found once that dependency is fixed.
 
 Static dependencies with a string identity or invalid params are
 rejected by `add_rule`. Rules may be registered in any order, so a
@@ -933,7 +941,8 @@ structs, so `Exception.message/1` formats them for logs:
      graph: static dependencies naming a rule that is not registered, and
      targets. It returns the graph error with the workflow unchanged.
   3. During the run, an invalid dependency returned by a dependency
-     function, or a cycle (§5), stops the run. `run` returns the graph
+     function, a shadowing involving a key it returned (§4), or a cycle
+     (§5), stops the run. `run` returns the graph
      error with the workflow, holding every fact recorded so far, and
      nothing for the key whose dependency function is at fault.
 
@@ -988,7 +997,8 @@ structs, so `Exception.message/1` formats them for logs:
 
   | Reason | For |
   | --- | --- |
-  | `{:bad_return, :deps, fun, retval, key_reason}` | A dependency function, or a `:deps` middleware wrapping it, returned an invalid dependency (§5). `fun` is the dependency function as written in the `deps` list, `retval` the whole returned value, `key_reason` one of the key reasons |
+  | `{:bad_return, :deps, fun, retval, key_reason}` | A dependency function, or a `:deps` middleware wrapping it, returned an invalid dependency (§5). `fun` is the dependency function as written in the `deps` list, `retval` the whole returned value, `key_reason` one of the key reasons except `:shadowing` |
+  | `{:shadowing, exposure, exposure}` | Two different keys of the alternative exposed under the same `deps` key, one of them returned by a dependency function (§4, §5) |
   | `{:cycle, key, stack}` | `key` demanded while in progress (§5). `stack` lists the keys being computed, in demand order, from the target down to the demanding key, the `key` of the error |
 - **Codec error** (`Ark.Workflow.CodecError`): a dump or a load failed: a
   value that cannot be encoded, a rule's `:dump` or `:load` that raises,
@@ -1590,13 +1600,17 @@ helpers in `test/support` are left to the implementor.
     that key: `{:unknown_rule, key}`
   - a key with a string `ns` or `name`: `{:invalid_key, given}`
   - a key with invalid params: `{:invalid_params, given}`
-  - a key exposed under the same `deps` key as a different key of the
-    alternative: `{:shadowing, exposure, exposure}`, when the other key
-    is...
-    - ...to the left of the dependency function
-    - ...a static dependency to its right
-    - ...returned by another dependency function of the alternative,
-      e.g. two alias maps with a common alias
+- A key returned by a dependency function and exposed under the same
+  `deps` key as a different key of the alternative makes `run` stop with
+  a graph error...
+  - ...with reason `{:shadowing, exposure, exposure}`, and the rule, key
+    and alternative being resolved
+  - ...when the other key is to the left of the dependency function
+  - ...when the other key is a static dependency to its right
+  - ...when the other key is returned by another dependency function of
+    the alternative, e.g. two alias maps with a common alias
+  - ...found on reaching the second exposure: a failing dependency in
+    between fails the alternative with `{:dep_failed, key}`
 - A key returned by a dependency function...
   - ...that is also another dependency of the alternative under the same
     `deps` key is accepted and demanded once...

@@ -103,11 +103,11 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
     key_reason
   end
 
-  defp shadowing_reason(deps) do
+  defp shadowing_exposures_of(deps) do
     wf = Workflow.add_rule(base_graph(), :r, rule(deps, ok_body(1)))
     {e, _} = run_graph_error(wf, [:r])
-    assert {:bad_return, :deps, fun, _, {:shadowing, _, _} = shadowing} = e.reason
-    {fun, shadowing_exposures(shadowing)}
+    assert {:shadowing, _, _} = e.reason
+    shadowing_exposures(e.reason)
   end
 
   describe "a dependency function" do
@@ -533,36 +533,61 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
         assert {:invalid_params, given} == invalid_return_reason(value)
       end
     end
+  end
 
-    test "a key exposed under the same deps key as a different key to the left of the dependency function" do
-      fun = fn _, _, _ -> %{a: :b} end
+  describe "a returned key exposed under the same deps key as a different key of the alternative makes run stop with a graph error" do
+    test "with reason {:shadowing, exposure, exposure}, and the rule, key and alternative being resolved" do
+      wf =
+        Workflow.add_rule(base_graph(), :r, %{
+          alts: [r1: %{deps: [:a, fn _, _, _ -> %{a: :b} end], body: ok_body(1)}]
+        })
 
-      assert {fun, MapSet.new([{:a, key(:a), :key}, {:a, key(:b), :alias}])} ==
-               shadowing_reason([:a, fun])
+      {e, wf} = run_graph_error(wf, [{:r, %{id: 1}}])
 
-      fun = fn _, _, _ -> %{x: :b} end
+      assert MapSet.new([{:a, key(:a), :key}, {:a, key(:b), :alias}]) ==
+               shadowing_exposures(e.reason)
 
-      assert {fun, MapSet.new([{:x, key(:a), :alias}, {:x, key(:b), :alias}])} ==
-               shadowing_reason([%{x: :a}, fun])
+      assert {:default, :r} == e.rule
+      assert {:default, :r, %{id: 1}} == e.key
+      assert :r1 == e.alternative
+      assert :error == Workflow.fetch(wf, {:r, %{id: 1}})
     end
 
-    test "a key exposed under the same deps key as a static dependency to its right" do
-      fun = fn _, _, _ -> %{c: :b} end
+    test "when the other key is to the left of the dependency function" do
+      assert MapSet.new([{:a, key(:a), :key}, {:a, key(:b), :alias}]) ==
+               shadowing_exposures_of([:a, fn _, _, _ -> %{a: :b} end])
 
-      assert {fun, MapSet.new([{:c, key(:b), :alias}, {:c, key(:c), :key}])} ==
-               shadowing_reason([fun, :c])
+      assert MapSet.new([{:x, key(:a), :alias}, {:x, key(:b), :alias}]) ==
+               shadowing_exposures_of([%{x: :a}, fn _, _, _ -> %{x: :b} end])
     end
 
-    test "a key exposed under the same deps key as a key returned by another dependency function of the alternative" do
-      fun = fn _, _, _ -> %{x: :b} end
+    test "when the other key is a static dependency to its right" do
+      assert MapSet.new([{:c, key(:b), :alias}, {:c, key(:c), :key}]) ==
+               shadowing_exposures_of([fn _, _, _ -> %{c: :b} end, :c])
+    end
 
-      assert {fun, MapSet.new([{:x, key(:a), :alias}, {:x, key(:b), :alias}])} ==
-               shadowing_reason([fn _, _, _ -> %{x: :a} end, fun])
+    test "when the other key is returned by another dependency function of the alternative" do
+      assert MapSet.new([{:x, key(:a), :alias}, {:x, key(:b), :alias}]) ==
+               shadowing_exposures_of([
+                 fn _, _, _ -> %{x: :a} end,
+                 fn _, _, _ -> %{x: :b} end
+               ])
 
-      fun = fn _, _, _ -> %{a: :b} end
+      assert MapSet.new([{:a, key(:a), :key}, {:a, key(:b), :alias}]) ==
+               shadowing_exposures_of([fn _, _, _ -> :a end, fn _, _, _ -> %{a: :b} end])
+    end
 
-      assert {fun, MapSet.new([{:a, key(:a), :key}, {:a, key(:b), :alias}])} ==
-               shadowing_reason([fn _, _, _ -> :a end, fun])
+    test "found on reaching the second exposure: a failing dependency in between fails the alternative" do
+      wf =
+        Workflow.add_rule(
+          base_graph(),
+          :r,
+          rule([fn _, _, _ -> [:fail, :c] end, %{c: :b}], ok_body(1))
+        )
+
+      assert {:error, %ComputationError{}, wf} = Workflow.run(wf, [:r])
+
+      assert {:ok, %{default: {:dep_failed, key(:fail)}}} == Workflow.attempts(wf, :r)
     end
   end
 
