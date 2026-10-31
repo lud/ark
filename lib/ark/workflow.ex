@@ -633,7 +633,8 @@ defmodule Ark.Workflow do
           computation_record(
             :error,
             "no rule registered for #{format_key(key)}",
-            %GraphError{reason: {:unknown_rule, key}}
+            %GraphError{reason: {:unknown_rule, key}},
+            nil
           )
 
         alt_failed(frame, record, st)
@@ -674,12 +675,16 @@ defmodule Ark.Workflow do
       {:ok, {:error, reason}} ->
         alt_failed(
           frame,
-          computation_record(:user_term, user_term_message(reason), reason),
+          computation_record(:user_term, format_reason(reason), reason, nil),
           st
         )
 
       {:ok, other} ->
-        alt_failed(frame, computation_record(:bad_return, inspect(other), other), st)
+        alt_failed(
+          frame,
+          computation_record(:bad_return, format_reason(other), other, nil),
+          st
+        )
 
       {:raised, record} ->
         alt_failed(frame, record, st)
@@ -787,20 +792,32 @@ defmodule Ark.Workflow do
     {:ok, invoke(Middleware.chain(st.middlewares, kind, meta, innermost_call(fun, args)))}
   catch
     kind, payload ->
+      reason = Exception.normalize(kind, payload, __STACKTRACE__)
+
+      message =
+        case kind do
+          :error -> format_reason({reason, __STACKTRACE__})
+          _ -> format_reason(reason)
+        end
+
       {:raised,
-       computation_record(
-         kind,
-         format_caught(kind, payload, __STACKTRACE__),
-         Exception.normalize(kind, payload, __STACKTRACE__)
-       )}
+       computation_record(kind, message, reason, format_stacktrace(__STACKTRACE__))}
   end
 
-  defp format_caught(kind, payload, stacktrace) do
-    {payload, stacktrace} = Exception.blame(kind, payload, stacktrace)
-    Exception.format(kind, payload, stacktrace)
+  defp format_reason(reason) do
+    Ark.Error.to_string(reason)
   catch
-    kind2, payload2 ->
-      "#{kind}: #{inspect(payload)} (could not be formatted: #{kind2}: #{inspect(payload2)})"
+    kind, payload ->
+      "#{inspect(reason)} (could not be formatted: #{kind}: #{inspect(payload)})"
+  end
+
+  defp format_stacktrace(stacktrace) do
+    stacktrace
+    |> Enum.map(fn
+      {m, f, args, location} when is_list(args) -> {m, f, length(args), location}
+      entry -> entry
+    end)
+    |> Exception.format_stacktrace()
   end
 
   defp innermost_call(fun, args) when is_function(fun) do
@@ -819,23 +836,15 @@ defmodule Ark.Workflow do
     apply(m, f, args)
   end
 
-  defp computation_record(kind, message, reason) do
+  defp computation_record(kind, message, reason, stacktrace) do
     {:computation_error,
-     %{at: DateTime.utc_now(), kind: kind, message: message, reason: reason}}
-  end
-
-  defp user_term_message(reason) do
-    if is_exception(reason) do
-      safe_message(reason)
-    else
-      inspect(reason)
-    end
-  end
-
-  defp safe_message(exception) do
-    Exception.message(exception)
-  catch
-    _, _ -> inspect(exception)
+     %{
+       at: DateTime.utc_now(),
+       kind: kind,
+       message: message,
+       stacktrace: stacktrace,
+       reason: reason
+     }}
   end
 
   # -- Errors ----------------------------------------------------------------
