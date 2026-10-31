@@ -111,7 +111,6 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
   end
 
   describe "a dependency function" do
-    @tag :skip
     test "is called only once every dependency to its left is ok" do
       log = start_log()
 
@@ -126,7 +125,6 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
       assert [:a, :b, :deps | _] = logged(log)
     end
 
-    @tag :skip
     test "receives the computed key's params, only the dependencies to its left, and the context" do
       {pid1, fun1} = mock_fun(100, fn _, _, _ -> %{x: :c} end)
       {pid2, fun2} = mock_fun(100, fn _, _, _ -> [] end)
@@ -140,7 +138,6 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
       assert [%{id: 1}, %{a: :va, x: :vc, b: :vb}, %{ctx: 1}] == List.last(calls(pid2))
     end
 
-    @tag :skip
     test "receives the dynamic dependencies to its left under their aliases" do
       {pid, fun} = mock_fun(100, fn _, _, _ -> [] end)
 
@@ -167,7 +164,6 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
       verify(pid)
     end
 
-    @tag :skip
     test "is not called once the key has a value, in the same run" do
       {pid, fun} = mock_fun(100, fn _, _, _ -> :a end)
 
@@ -187,7 +183,6 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
   end
 
   describe "the keys a dependency function returns" do
-    @tag :skip
     test "are demanded before the entries to its right" do
       log = start_log()
 
@@ -217,7 +212,6 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
       assert %{x: :va, y: :vb, z: :vn} == fetch!(wf, :r)
     end
 
-    @tag :skip
     test "as a list are exposed under their written forms" do
       wf =
         base_graph()
@@ -240,7 +234,6 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
              } == fetch!(wf, :r)
     end
 
-    @tag :skip
     test "as a single key are exposed under its written form" do
       wf =
         base_graph()
@@ -257,7 +250,6 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
       assert %{{:p, %{id: 1}} => %{id: 1}} == fetch!(wf, :r2)
     end
 
-    @tag :skip
     test "as a list are demanded in list order: the first failed key fails the alternative, and the keys after it are not demanded" do
       log = start_log()
 
@@ -294,7 +286,6 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
       assert [:a, :fail] == logged(log)
     end
 
-    @tag :skip
     test "as a large alias map are demanded in ordered-iterator order" do
       log = start_log()
       aliases = Enum.map(60..1//-1, &:"alias_#{&1}")
@@ -315,7 +306,6 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
       assert Enum.map(Enum.sort(aliases), &%{alias: &1}) == logged(log)
     end
 
-    @tag :skip
     test "written name or {name, params} resolve in the namespace of the demanding rule, also when a {module, function, extra_args} dependency function is defined in another module" do
       wf =
         Workflow.new()
@@ -340,7 +330,6 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
     end
   end
 
-  @tag :skip
   test "a dependency function returning an empty map or an empty list demands nothing, and the body runs" do
     {pid, body} = mock_fun(2, deps_body())
 
@@ -356,7 +345,6 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
     assert %{a: :va} == fetch!(wf, :r2)
   end
 
-  @tag :skip
   test "when a dependency function returns different keys across calls, the engine follows the keys of the latest call; values of keys no longer returned stay recorded" do
     phase = start_log()
 

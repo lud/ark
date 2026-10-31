@@ -77,7 +77,7 @@ defmodule Ark.Workflow do
     end
   end
 
-  def add_ns(%__MODULE__{} = wf, new_ns, callback) when not is_name(new_ns) do
+  def add_ns(%__MODULE__{}, new_ns, _callback) when not is_name(new_ns) do
     raise GraphError, reason: {:invalid_namespace, new_ns}
   end
 
@@ -95,10 +95,11 @@ defmodule Ark.Workflow do
   end
 
   def run(wf, targets, opts \\ []) do
+    ctx = opts[:context] || %{}
     prerun_check!(wf, targets)
-    %{stack: stack, store: store, default_ns: default_ns} = wf
+    %{store: store} = wf
 
-    case run_targets(targets, store, wf) do
+    case run_targets(targets, store, %{wf | ctx: ctx}) do
       {:ok, store} ->
         {:ok, %{wf | stack: [], store: store}}
 
@@ -456,7 +457,7 @@ defmodule Ark.Workflow do
     end
   end
 
-  defp run_loop([frame(key: key) = x], %{results: results}, _wf)
+  defp run_loop([frame(key: key)], %{results: results}, _wf)
        when is_map_key(results, key) do
     raise "already ran"
   end
@@ -492,7 +493,7 @@ defmodule Ark.Workflow do
             store = put_result(store, key, {:ok, value})
             run_loop(frames, store, wf)
 
-          {:error, reason} = err ->
+          {:error, reason} ->
             IO.puts("== call failed")
 
             store =
@@ -502,7 +503,7 @@ defmodule Ark.Workflow do
             run_loop([frame | frames], store, wf)
         end
 
-      {:error, :dep_failed, dep(key: dep_key) = dep} ->
+      {:error, :dep_failed, dep(key: dep_key)} ->
         store = put_attempt(store, key, alt_key, {:dep_failed, dep_key})
         frame = frame(frame, arms: arms)
         run_loop([frame | frames], store, wf)
@@ -523,7 +524,7 @@ defmodule Ark.Workflow do
     run_loop(frames, store, wf)
   end
 
-  defp run_loop([], store, wf) do
+  defp run_loop([], store, _wf) do
     {:ok, [], store}
   end
 
@@ -567,7 +568,7 @@ defmodule Ark.Workflow do
 
   #
 
-  defp pull_deps(arm(deps: []) = arm, _store, key, wf) do
+  defp pull_deps(arm(deps: []) = arm, _store, _key, _wf) do
     {:ready, arm}
   end
 
@@ -592,7 +593,7 @@ defmodule Ark.Workflow do
         acc = Map.put(acc, alias_name, dep_val)
         do_pull_deps(deps, acc, store, key, wf)
 
-      %{^fk => {:failed, _} = err} ->
+      %{^fk => {:failed, _}} ->
         {:error, :dep_failed, dep}
 
       _ ->
@@ -651,11 +652,11 @@ defmodule Ark.Workflow do
   - Anything else: validate it as a single static key.
   """
 
-  defp do_pull_deps([dyn(callback: fun) = dep | deps], acc, store, key, wf) do
+  defp do_pull_deps([dyn(callback: fun) | deps], acc, store, key, wf) do
     {ns, _, params} = key
 
     new_deps = call_dep(fun, params, acc, wf)
-    new_deps = normalize_deps([new_deps], ns)
+    new_deps = normalize_deps(List.wrap(new_deps), ns)
 
     do_pull_deps(new_deps ++ deps, acc, store, key, wf)
   end
@@ -682,6 +683,10 @@ defmodule Ark.Workflow do
 
     case call_impl(fun, {params, acc, ctx}) do
       map when is_map(map) -> map
+      list when is_list(list) -> list
+      atom when is_atom(atom) -> atom
+      {ns, name, params} = t when is_atom(ns) and is_atom(name) and is_map(params) -> t
+      {name, params} = t when is_atom(name) and is_map(params) -> t
     end
   end
 
