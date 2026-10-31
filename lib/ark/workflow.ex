@@ -161,7 +161,7 @@ defmodule Ark.Workflow do
   # TODO "attempts" does not mean "failure". But "attempt" that we store are
   # only failures, not successes. So we should rename to "failure".
   def attempts(%__MODULE__{} = wf, key) do
-    case normalize_key(key, wf.default_ns) |> dbg() do
+    case normalize_key(key, wf.default_ns) do
       {:ok, fk} -> fetch_attempts(wf, fk)
       {:error, reason} -> {:error, %GraphError{reason: reason}}
     end
@@ -292,7 +292,7 @@ defmodule Ark.Workflow do
 
   defp validate_dep(aliases) when is_map(aliases) and not is_struct(aliases) do
     case validate_static_keys(Map.values(aliases)) do
-      :ok -> {:ok, aliases}
+      {:ok, _} -> {:ok, aliases}
       {:error, reason} -> {:error, %GraphError{reason: reason}}
     end
   end
@@ -328,16 +328,7 @@ defmodule Ark.Workflow do
   end
 
   defp validate_static_keys(keys) do
-    first_error(keys, &validate_static_key/1)
-  end
-
-  defp first_error(items, check) do
-    Enum.find_value(items, :ok, fn item ->
-      case check.(item) do
-        {:error, _} = err -> err
-        _ -> nil
-      end
-    end)
+    Ark.Ok.map_ok(keys, &validate_static_key/1)
   end
 
   defp validate_params(params) do
@@ -627,9 +618,9 @@ defmodule Ark.Workflow do
     {ns, _, params} = key
     value = call_dep(fun, params, acc, wf)
 
-    with :ok <- validate_returned_deps(value),
+    with {:ok, _} <- validate_returned_deps(value),
          new_deps = normalize_deps(List.wrap(value), ns),
-         :ok <- first_error(new_deps, &check_known_rule(&1, wf)) do
+         {:ok, new_deps} <- Ark.Ok.map_ok(new_deps, &check_known_rule(&1, wf)) do
       do_pull_deps(new_deps ++ deps, acc, store, key, wf)
     else
       {:error, reason} -> {:error, :bad_return, {:bad_return, :deps, fun, value, reason}}
@@ -747,16 +738,16 @@ defmodule Ark.Workflow do
     end
   end
 
-  defp check_known_rule(dep(key: {ns, name, _} = key), wf) do
+  defp check_known_rule(dep(key: {ns, name, _} = key) = dep, wf) do
     if Map.has_key?(wf.rules, {ns, name}) do
-      :ok
+      {:ok, dep}
     else
       {:error, {:unknown_rule, key}}
     end
   end
 
-  defp check_known_rule(dyn(), _wf) do
-    :ok
+  defp check_known_rule(dyn() = dyn, _wf) do
+    {:ok, dyn}
   end
 
   #
