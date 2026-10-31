@@ -19,15 +19,6 @@ defmodule Ark.Workflow.UserCodeTest do
     end
   end
 
-  defmodule BlamedError do
-    defexception [:message]
-
-    @impl true
-    def blame(e, stacktrace) do
-      {%{e | message: e.message <> " (enriched by blame)"}, stacktrace}
-    end
-  end
-
   defp attempt_error(body) do
     wf = Workflow.add_rule(Workflow.new(), :r, rule([], body))
     assert {:error, %ComputationError{}, wf} = Workflow.run(wf, [:r])
@@ -47,7 +38,7 @@ defmodule Ark.Workflow.UserCodeTest do
 
   describe "a body returning {:error, reason} fails the alternative" do
     test "with kind :user_term and no stacktrace" do
-      assert %{kind: :user_term, message: ":some_reason"} =
+      assert %{kind: :user_term, message: ":some_reason", stacktrace: nil} =
                attempt_error(error_body(:some_reason))
     end
 
@@ -61,29 +52,31 @@ defmodule Ark.Workflow.UserCodeTest do
       assert %{kind: :user_term, message: "bad arg"} = attempt_error(error_body(reason))
     end
 
-    test "with inspect(reason) when reason is any other term" do
-      for reason <- [{:not_found, 123}, "a string", %{a: 1}, [1, 2], nil] do
+    test "with the Ark.Error rendering of reason for any other term" do
+      for reason <- [{:not_found, 123}, "a string", %{a: 1}, [1, 2], nil, {:shutdown, :x}] do
         assert %{kind: :user_term, message: error} = attempt_error(error_body(reason))
-        assert inspect(reason) == error
+        assert Ark.Error.to_string(reason) == error
       end
     end
   end
 
-  test "a body returning anything else fails the alternative with kind :bad_return, no stacktrace, and a message holding the returned value" do
+  test "a body returning anything else fails the alternative with kind :bad_return, no stacktrace, and the Ark.Error rendering of the returned value as message" do
     for value <- [:ok, {:ok, 1, 2}, {:error, 1, 2}, nil, 42, "str", {:error}, %{ok: 1}] do
-      assert %{kind: :bad_return, message: error} = attempt_error(fn _, _, _ -> value end)
-      assert error =~ inspect(value)
-      refute error =~ "04_user_code_test.exs"
+      assert %{kind: :bad_return, message: error, stacktrace: nil} =
+               attempt_error(fn _, _, _ -> value end)
+
+      assert Ark.Error.to_string(value) == error
     end
   end
 
   describe "a body that" do
-    test "raises fails the alternative with kind :error, the message and a formatted stacktrace" do
-      assert %{kind: :error, message: error} =
+    test "raises fails the alternative with kind :error, a message naming the exception, and a formatted stacktrace" do
+      assert %{kind: :error, message: error, stacktrace: stacktrace} =
                attempt_error(fn _, _, _ -> raise "boom" end)
 
       assert error =~ "(RuntimeError) boom"
-      assert error =~ "04_user_code_test.exs"
+      refute error =~ "04_user_code_test.exs"
+      assert stacktrace =~ "04_user_code_test.exs"
 
       assert %{kind: :error, message: error} =
                attempt_error(fn _, _, _ -> raise DomainError, "domain failure" end)
@@ -92,30 +85,40 @@ defmodule Ark.Workflow.UserCodeTest do
       assert error =~ "domain failure"
     end
 
-    test "matches on unexpected params and raises FunctionClauseError is caught like any raise" do
+    test "matches on unexpected params and raises FunctionClauseError is caught like any raise, with no argument value in its message or stacktrace" do
       wf =
         Workflow.add_rule(Workflow.new(), :r, rule([], fn %{id: 1}, _, _ -> {:ok, 1} end))
 
-      assert {:error, %ComputationError{}, wf} = Workflow.run(wf, [{:r, %{id: 2}}])
+      key = {:r, %{id: 2, token: "s3cr3t"}}
+      assert {:error, %ComputationError{}, wf} = Workflow.run(wf, [key])
 
-      assert {:ok, %{default: {:computation_error, %{kind: :error, message: error}}}} =
-               Workflow.attempts(wf, {:r, %{id: 2}})
+      assert {:ok,
+              %{
+                default:
+                  {:computation_error,
+                   %{kind: :error, message: error, stacktrace: stacktrace}}
+              }} = Workflow.attempts(wf, key)
 
       assert error =~ "FunctionClauseError"
+      refute error =~ "s3cr3t"
+      assert stacktrace =~ "04_user_code_test.exs"
+      refute stacktrace =~ "s3cr3t"
     end
 
     test "throws fails the alternative with kind :throw" do
-      assert %{kind: :throw, message: error} =
+      assert %{kind: :throw, message: error, stacktrace: stacktrace} =
                attempt_error(fn _, _, _ -> throw(:thrown_value) end)
 
       assert error =~ ":thrown_value"
+      assert stacktrace =~ "04_user_code_test.exs"
     end
 
     test "exits fails the alternative with kind :exit, also with reason :normal" do
-      assert %{kind: :exit, message: error} =
+      assert %{kind: :exit, message: error, stacktrace: stacktrace} =
                attempt_error(fn _, _, _ -> exit(:some_reason) end)
 
       assert error =~ ":some_reason"
+      assert stacktrace =~ "04_user_code_test.exs"
 
       assert %{kind: :exit, message: error} =
                attempt_error(fn _, _, _ -> exit(:normal) end)
@@ -134,13 +137,6 @@ defmodule Ark.Workflow.UserCodeTest do
              attempt_error(fn _, _, _ -> raise BrokenMessageError, value: 1 end)
 
     assert is_binary(error)
-  end
-
-  test "a user exception's blame/2 callback enriches its formatted message" do
-    assert %{kind: :error, message: error} =
-             attempt_error(fn _, _, _ -> raise BlamedError, "original" end)
-
-    assert error =~ "original (enriched by blame)"
   end
 
   test "every cleaned error carries the time it was recorded" do
