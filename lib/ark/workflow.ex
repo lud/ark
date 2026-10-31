@@ -239,8 +239,8 @@ defmodule Ark.Workflow do
       |> Enum.with_index()
       |> Enum.map(fn {dep, index} -> parse_dep(dep, ns, identity, name, index) end)
 
-    exposed = check_shadowing!(entries, identity, name)
-    %{deps: entries, body: body, exposed: exposed}
+    check_shadowing!(entries, identity, name)
+    %{deps: entries, body: body}
   end
 
   defp parse_dep(fun, _ns, identity, alt, index) when is_function(fun) do
@@ -265,7 +265,7 @@ defmodule Ark.Workflow do
   defp parse_dep(map, ns, identity, alt, _index) when is_map(map) do
     {:alias,
      Enum.map(ordered_pairs(map), fn {a, k} ->
-       {a, parse_dep_key(k, ns, identity, alt)}
+       {a, parse_dep_key(k, ns, identity, alt), :alias}
      end)}
   end
 
@@ -285,7 +285,7 @@ defmodule Ark.Workflow do
       Enum.flat_map(entries, fn
         {:fun, _} -> []
         {:key, term, key} -> [{term, key, :key}]
-        {:alias, pairs} -> Enum.map(pairs, fn {a, key} -> {a, key, :alias} end)
+        {:alias, exposures} -> exposures
       end)
 
     Enum.reduce(exposures, %{}, fn exposure, acc ->
@@ -602,25 +602,26 @@ defmodule Ark.Workflow do
       body: alt.body,
       entries: alt.deps,
       pending: [],
-      deps: %{},
-      exposed: alt.exposed
+      exposed: %{}
     }
 
     advance(%{frame | alts: more, cur: cur}, st)
   end
 
-  defp advance(%{cur: %{pending: [{exposed, key} | more]} = cur} = frame, st) do
+  defp advance(%{cur: %{pending: [{_, key, _} = exposure | more]} = cur} = frame, st) do
     %{values: values, failed: failed} = st
+
+    exposed =
+      case expose(cur.exposed, exposure) do
+        {:ok, exposed} -> exposed
+        {:error, reason} -> throw({:graph_error, alt_error(reason, frame, cur), st})
+      end
+
+    cur = %{cur | exposed: exposed}
 
     cond do
       is_map_key(values, key) ->
-        cur = %{
-          cur
-          | pending: more,
-            deps: Map.put(cur.deps, exposed, Map.fetch!(values, key))
-        }
-
-        advance(%{frame | cur: cur}, st)
+        advance(%{frame | cur: %{cur | pending: more}}, st)
 
       is_map_key(failed, key) ->
         alt_failed(frame, {:dep_failed, key}, st)
@@ -648,8 +649,8 @@ defmodule Ark.Workflow do
     cur = %{cur | entries: more}
 
     case expand(entry, cur, frame, st) do
-      {:ok, pending, exposed} ->
-        advance(%{frame | cur: %{cur | pending: pending, exposed: exposed}}, st)
+      {:ok, pending} ->
+        advance(%{frame | cur: %{cur | pending: pending}}, st)
 
       {:error, record} ->
         alt_failed(frame, record, st)
@@ -659,7 +660,7 @@ defmodule Ark.Workflow do
   defp advance(%{cur: %{entries: [], pending: []} = cur} = frame, st) do
     case call_user(
            cur.body,
-           [elem(frame.key, 2), cur.deps, st.context],
+           [elem(frame.key, 2), deps_values(cur, st), st.context],
            :computation,
            frame,
            cur,
@@ -698,24 +699,24 @@ defmodule Ark.Workflow do
     advance(%{frame | cur: nil}, %{st | attempts: attempts})
   end
 
-  defp expand({:key, term, key}, cur, _frame, _st) do
-    {:ok, [{term, key}], cur.exposed}
+  defp expand({:key, term, key}, _cur, _frame, _st) do
+    {:ok, [{term, key, :key}]}
   end
 
-  defp expand({:alias, pairs}, cur, _frame, _st) do
-    {:ok, pairs, cur.exposed}
+  defp expand({:alias, exposures}, _cur, _frame, _st) do
+    {:ok, exposures}
   end
 
   defp expand({:fun, fun}, cur, frame, st) do
     {ns, _, params} = frame.key
 
-    case call_user(fun, [params, cur.deps, st.context], :deps, frame, cur, st) do
+    case call_user(fun, [params, deps_values(cur, st), st.context], :deps, frame, cur, st) do
       {:ok, result} -> dynamic_deps(result, ns, {fun, result, cur, frame, st})
       {:raised, record} -> {:error, record}
     end
   end
 
-  defp dynamic_deps(result, ns, {_, _, cur, _, st} = ctx) do
+  defp dynamic_deps(result, ns, {_, _, _, _, st} = ctx) do
     exposures = parse_dynamic(result, ns, ctx)
 
     Enum.each(exposures, fn {_, {kns, name, _} = key, _} ->
@@ -724,15 +725,13 @@ defmodule Ark.Workflow do
       end
     end)
 
-    exposed =
-      Enum.reduce(exposures, cur.exposed, fn exposure, acc ->
-        case expose(acc, exposure) do
-          {:ok, acc} -> acc
-          {:error, reason} -> dynamic_error(reason, ctx)
-        end
-      end)
+    {:ok, exposures}
+  end
 
-    {:ok, Enum.map(exposures, fn {exposed, key, _} -> {exposed, key} end), exposed}
+  defp deps_values(cur, st) do
+    Map.new(cur.exposed, fn {exposed, {key, _}} ->
+      {exposed, Map.fetch!(st.values, key)}
+    end)
   end
 
   defp parse_dynamic(result, ns, ctx) when is_map(result) do
@@ -760,14 +759,18 @@ defmodule Ark.Workflow do
 
   @spec dynamic_error(term, tuple) :: no_return
   defp dynamic_error(reason, {fun, result, cur, frame, st}) do
-    error = %GraphError{
+    throw(
+      {:graph_error, alt_error({:bad_return, :deps, fun, result, reason}, frame, cur), st}
+    )
+  end
+
+  defp alt_error(reason, frame, cur) do
+    %GraphError{
       rule: rule_of(frame.key),
       key: frame.key,
       alternative: cur.name,
-      reason: {:bad_return, :deps, fun, result, reason}
+      reason: reason
     }
-
-    throw({:graph_error, error, st})
   end
 
   defp cycle_error(key, frame, st) do
