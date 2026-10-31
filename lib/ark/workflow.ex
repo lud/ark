@@ -406,7 +406,10 @@ defmodule Ark.Workflow do
   end
 
   defp normalize_dep(aliases, ns) when is_map(aliases) do
-    Enum.map(aliases, fn {alias_name, key} ->
+    aliases
+    |> :maps.iterator(:ordered)
+    |> :maps.to_list()
+    |> Enum.map(fn {alias_name, key} ->
       dep(alias: alias_name, key: full_key(key, ns), source: :alias)
     end)
   end
