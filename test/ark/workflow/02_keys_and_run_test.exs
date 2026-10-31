@@ -141,10 +141,8 @@ defmodule Ark.Workflow.KeysAndRunTest do
   test "an error message prints keys of :default without their namespace" do
     wf =
       Workflow.new()
-      |> Workflow.add_rule(:top, %{
-        alts: [main: %{deps: [:leaf], body: ok_body(1)}]
-      })
-      |> Workflow.add_rule(:leaf, %{alts: [main: %{deps: [], body: error_body(:oops)}]})
+      |> Workflow.add_rule(:top, rule([:leaf], ok_body(1)))
+      |> Workflow.add_rule(:leaf, failing_rule(:oops))
 
     assert {:error, %ComputationError{} = e, _} = Workflow.run(wf, [{:top, %{id: 1}}])
     message = Exception.message(e)
@@ -396,8 +394,8 @@ defmodule Ark.Workflow.KeysAndRunTest do
         |> Workflow.add_rule(:b, failing_rule())
         |> Workflow.add_rule(:a, %{
           alts: [
-            one: %{deps: [], body: error_body(:nope)},
-            two: %{deps: [:b], body: ok_body(1)}
+            a1: %{deps: [], body: error_body(:nope)},
+            a2: %{deps: [:b], body: ok_body(1)}
           ]
         })
 
@@ -405,8 +403,8 @@ defmodule Ark.Workflow.KeysAndRunTest do
 
       assert {:ok,
               %{
-                one: {:computation_error, %{kind: :user_term, message: ":nope"}},
-                two: {:dep_failed, {:default, :b, %{}}}
+                a1: {:computation_error, %{kind: :user_term, message: ":nope"}},
+                a2: {:dep_failed, {:default, :b, %{}}}
               }} = Workflow.attempts(wf, :a)
     end
 

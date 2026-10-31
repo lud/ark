@@ -488,8 +488,8 @@ defmodule Ark.Workflow.GraphBuildingTest do
       |> Workflow.add_rule(:c, const_rule(:from_c))
       |> Workflow.add_rule(:r, %{
         alts: [
-          one: %{deps: [%{x: :b}], body: error_body()},
-          two: %{deps: [%{x: :c}], body: deps_body()}
+          r1: %{deps: [%{x: :b}], body: error_body()},
+          r2: %{deps: [%{x: :c}], body: deps_body()}
         ]
       })
 
@@ -505,8 +505,8 @@ defmodule Ark.Workflow.GraphBuildingTest do
       |> Workflow.add_rule(:d, const_rule(:from_d))
       |> Workflow.add_rule(:r, %{
         alts: [
-          one: %{deps: [:b], body: error_body()},
-          two: %{deps: [:c, :d], body: deps_body()}
+          r1: %{deps: [:b], body: error_body()},
+          r2: %{deps: [:c, :d], body: deps_body()}
         ]
       })
 

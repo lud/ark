@@ -34,8 +34,8 @@ defmodule Ark.Workflow.MiddlewaresTest do
     |> Workflow.add_rule(:b, const_rule(:vb))
     |> Workflow.add_rule(:a, %{
       alts: [
-        first: %{deps: [], body: error_body()},
-        second: %{deps: [:b, fn _, _, _ -> %{x: :b} end], body: deps_body()}
+        a1: %{deps: [], body: error_body()},
+        a2: %{deps: [:b, fn _, _, _ -> %{x: :b} end], body: deps_body()}
       ]
     })
   end
@@ -55,10 +55,10 @@ defmodule Ark.Workflow.MiddlewaresTest do
       key_a = {:default, :a, %{id: 1}}
       key_b = {:default, :b, %{}}
 
-      assert {:mw, :computation, %{key: key_a, alternative: :first}} in entries
+      assert {:mw, :computation, %{key: key_a, alternative: :a1}} in entries
       assert {:mw, :computation, %{key: key_b, alternative: :default}} in entries
-      assert {:mw, :deps, %{key: key_a, alternative: :second}} in entries
-      assert {:mw, :computation, %{key: key_a, alternative: :second}} in entries
+      assert {:mw, :deps, %{key: key_a, alternative: :a2}} in entries
+      assert {:mw, :computation, %{key: key_a, alternative: :a2}} in entries
 
       bodies = Enum.filter(entries, &match?({_, :computation, _}, &1))
       assert 3 == length(bodies)

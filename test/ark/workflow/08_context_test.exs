@@ -59,9 +59,9 @@ defmodule Ark.Workflow.ContextTest do
       |> Workflow.add_rule(:b, const_rule(:vb))
       |> Workflow.add_rule(:a, %{
         alts: [
-          one: %{deps: [], body: error_body(:secret_reason)},
-          two: %{deps: [], body: fn _, _, _ -> raise "secret raise" end},
-          three: %{deps: [:b], body: body}
+          a1: %{deps: [], body: error_body(:secret_reason)},
+          a2: %{deps: [], body: fn _, _, _ -> raise "secret raise" end},
+          a3: %{deps: [:b], body: body}
         ]
       })
 

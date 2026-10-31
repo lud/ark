@@ -54,16 +54,16 @@ defmodule Ark.Workflow.EvaluationOrderTest do
       wf =
         Workflow.add_rule(Workflow.new(), :r, %{
           alts: [
-            one: %{deps: [], body: tracked(log, :one, {:error, :x})},
-            two: %{deps: [], body: tracked(log, :two, :bad_return)},
-            three: %{deps: [], body: tracked(log, :three, {:ok, :three})}
+            r1: %{deps: [], body: tracked(log, :r1, {:error, :x})},
+            r2: %{deps: [], body: tracked(log, :r2, :bad_return)},
+            r3: %{deps: [], body: tracked(log, :r3, {:ok, :r3})}
           ]
         })
 
       wf = run!(wf, [:r])
 
-      assert [:one, :two, :three] == logged(log)
-      assert :three == fetch!(wf, :r)
+      assert [:r1, :r2, :r3] == logged(log)
+      assert :r3 == fetch!(wf, :r)
     end
 
     test "the dependencies of the next alternative are not demanded before the previous one failed" do
@@ -111,7 +111,7 @@ defmodule Ark.Workflow.EvaluationOrderTest do
 
     test "no alternative is entered once one succeeded" do
       {deps_pid, never_deps} = mock_never(fn _, _, _ -> :b end)
-      {body_pid, never_body} = mock_never(ok_body(:two))
+      {body_pid, never_body} = mock_never(ok_body(:r2))
       {b_pid, never_b} = mock_never(ok_body(:b))
 
       wf =
@@ -119,8 +119,8 @@ defmodule Ark.Workflow.EvaluationOrderTest do
         |> Workflow.add_rule(:b, rule([], never_b))
         |> Workflow.add_rule(:r, %{
           alts: [
-            one: %{deps: [], body: ok_body(:one)},
-            two: %{deps: [:b, never_deps], body: never_body}
+            r1: %{deps: [], body: ok_body(:r1)},
+            r2: %{deps: [:b, never_deps], body: never_body}
           ]
         })
 
@@ -129,7 +129,7 @@ defmodule Ark.Workflow.EvaluationOrderTest do
       verify(deps_pid)
       verify(body_pid)
       verify(b_pid)
-      assert :one == fetch!(wf, :r)
+      assert :r1 == fetch!(wf, :r)
       assert {:ok, %{}} == Workflow.attempts(wf, :r)
     end
   end
@@ -190,8 +190,8 @@ defmodule Ark.Workflow.EvaluationOrderTest do
 
     consumer = %{
       alts: [
-        one: %{deps: [:f], body: ok_body(:one)},
-        two: %{deps: [], body: ok_body(:two)}
+        via_f: %{deps: [:f], body: ok_body(:via_f)},
+        fallback: %{deps: [], body: ok_body(:fallback)}
       ]
     }
 
@@ -205,7 +205,7 @@ defmodule Ark.Workflow.EvaluationOrderTest do
     wf = run!(wf, [:x, :y, :z])
 
     verify(pid)
-    assert :two == fetch!(wf, :y)
+    assert :fallback == fetch!(wf, :y)
   end
 
   test "nothing is computed unless it is a target or transitively demanded by one" do
@@ -219,8 +219,8 @@ defmodule Ark.Workflow.EvaluationOrderTest do
       |> Workflow.add_rule(:a, const_rule(1))
       |> Workflow.add_rule(:r, %{
         alts: [
-          one: %{deps: [:a], body: ok_body(1)},
-          two: %{deps: [:unrelated], body: never}
+          r1: %{deps: [:a], body: ok_body(1)},
+          r2: %{deps: [:unrelated], body: never}
         ]
       })
 
