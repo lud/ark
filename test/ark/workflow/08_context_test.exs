@@ -6,7 +6,6 @@ defmodule Ark.Workflow.ContextTest do
 
   alias Ark.Workflow
 
-  @tag :skip
   test "user code receives the context given to the run, unchanged" do
     context = %{
       pid: self(),
@@ -34,7 +33,6 @@ defmodule Ark.Workflow.ContextTest do
     assert [[%{}, %{}, %{}]] = calls(pid)
   end
 
-  @tag :skip
   test "a body and a dependency function receive the same context" do
     context = %{ctx: make_ref()}
     {deps_pid, deps_fun} = mock_fun(100, fn _, _, _ -> :b end)

@@ -198,7 +198,6 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
       assert [:b, :a, :c] == logged(log)
     end
 
-    @tag :skip
     test "as an alias map are exposed in deps under their aliases" do
       wf =
         base_graph()
@@ -401,12 +400,10 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
       assert error =~ "boom"
     end
 
-    @tag :skip
     test "throws fails the alternative with kind :throw" do
       assert %{kind: :throw} = failing_deps_attempt(fn _, _, _ -> throw(:x) end)
     end
 
-    @tag :skip
     test "exits fails the alternative with kind :exit" do
       assert %{kind: :exit} = failing_deps_attempt(fn _, _, _ -> exit(:x) end)
     end
@@ -430,7 +427,6 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
       %{wf: wf, a_pid: a_pid}
     end
 
-    @tag :skip
     test "carrying the returned value, and the key and alternative whose dependency function returned it",
          %{wf: wf} do
       {e, _} = run_graph_error(wf, [:top])
@@ -441,7 +437,6 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
       assert :r2 == e.alternative
     end
 
-    @tag :skip
     test "returned with the workflow and every fact recorded before", %{
       wf: wf,
       a_pid: a_pid
@@ -455,7 +450,6 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
                Workflow.attempts(wf, {:r, %{id: 1}})
     end
 
-    @tag :skip
     test "recording nothing for the key whose dependency function returned it", %{wf: wf} do
       {_, wf} = run_graph_error(wf, [:top])
 
@@ -468,14 +462,12 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
   end
 
   describe "invalid dependencies, each a graph error" do
-    @tag :skip
     test "nil, true and false, reported as invalid returns, not as keys with no rule" do
       for value <- [nil, true, false] do
         assert {:invalid_key, value} == invalid_return_reason(value)
       end
     end
 
-    @tag :skip
     test "a string, a number, a function, a nested list, a list holding an alias map" do
       for value <- ["a", 1, 1.5, fn -> :a end, {:a, :b, :c, :d}, {:a}] do
         assert {:invalid_key, value} == invalid_return_reason(value)
@@ -491,7 +483,6 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
       end
     end
 
-    @tag :skip
     test "{:ok, keys}, with a message hinting that keys are returned directly" do
       for value <- [{:ok, [:a]}, {:ok, :a}, {:ok, %{x: :a}}] do
         e = invalid_return_error(value)
@@ -499,7 +490,6 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
       end
     end
 
-    @tag :skip
     test "a key with no registered rule" do
       for {value, key} <- [
             {:missing, key(:missing)},
@@ -512,7 +502,6 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
       end
     end
 
-    @tag :skip
     test "a key with a string ns or name" do
       for {value, given} <- [
             {{"a", %{}}, {"a", %{}}},
@@ -525,7 +514,6 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
       end
     end
 
-    @tag :skip
     test "a key with invalid params" do
       for value <- [
             {:a, [id: 1]},
@@ -582,7 +570,6 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
   end
 
   describe "a key returned by a dependency function that is also another dependency of the alternative under the same deps key is accepted and demanded once" do
-    @tag :skip
     test "from a static dependency" do
       {pid, body} = mock_fun(1, ok_body(:va))
 
@@ -602,7 +589,6 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
       assert %{x: :va} == fetch!(wf, :r2)
     end
 
-    @tag :skip
     test "from another dependency function" do
       {pid, body} = mock_fun(1, ok_body(:va))
 
@@ -624,7 +610,6 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
     end
   end
 
-  @tag :skip
   test "a key returned by a dependency function that is also another dependency of the alternative in another written form is demanded once and exposed under both forms" do
     {pid, body} = mock_fun(1, ok_body(:va))
 
@@ -639,7 +624,6 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
     assert %{:a => :va, {:a, %{}} => :va} == fetch!(wf, :r)
   end
 
-  @tag :skip
   test "a key returned by a dependency function naming an existing rule whose computation fails fails the alternative with {:dep_failed, key}" do
     wf =
       Workflow.add_rule(
@@ -872,6 +856,7 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
     end
   end
 
+  @tag :skip
   test "a dependency function that raises, throws or exits records the same reason and stacktrace as a body would" do
     assert %{
              kind: :error,

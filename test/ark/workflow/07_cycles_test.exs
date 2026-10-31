@@ -70,7 +70,6 @@ defmodule Ark.Workflow.CyclesTest do
     end
   end
 
-  @tag :skip
   test "a key demanded twice from different branches (a diamond) is not a cycle: it is computed once" do
     {pid, body} = mock_fun(1, ok_body(:shared))
 
@@ -162,7 +161,6 @@ defmodule Ark.Workflow.CyclesTest do
     assert {:ok, %{a1: {:computation_error, _}}} = Workflow.attempts(wf, :a)
   end
 
-  @tag :skip
   test "a rule demanding itself with other params is not a cycle" do
     wf =
       Workflow.add_rule(Workflow.new(), :fact, %{
@@ -187,7 +185,6 @@ defmodule Ark.Workflow.CyclesTest do
     assert 6 == fetch!(wf, {:fact, %{n: 3}})
   end
 
-  @tag :skip
   test "a chain of 10,000 dependent keys computes, and the cycle check stays cheap at that depth" do
     wf =
       Workflow.add_rule(Workflow.new(), :chain, %{
