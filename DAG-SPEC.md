@@ -1494,7 +1494,7 @@ helpers in `test/support` are left to the implementor.
   - ...the thrown value for kind `:throw`
   - ...the exit reason for kind `:exit`
 - A dependency function that raises, throws or exits records the same
-  `reason` as a body would
+  `reason` and `stacktrace` as a body would
 
 ### Evaluation order (§2)
 

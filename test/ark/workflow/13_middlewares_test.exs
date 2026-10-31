@@ -231,8 +231,9 @@ defmodule Ark.Workflow.MiddlewaresTest do
     wf = Workflow.add_rule(Workflow.new(), :a, const_rule(1))
 
     assert {:error, %ComputationError{}, wf} = Workflow.run(wf, [:a], middlewares: [mw])
-    assert %{kind: :error, message: error} = attempt_error(wf, :a)
+    assert %{kind: :error, message: error, stacktrace: st} = attempt_error(wf, :a)
     assert error =~ "middleware boom"
+    assert st =~ "13_middlewares_test.exs"
 
     deps_mw = fn
       :deps, _, _ -> throw(:middleware_throw)
@@ -247,7 +248,8 @@ defmodule Ark.Workflow.MiddlewaresTest do
     assert {:error, %ComputationError{}, wf} =
              Workflow.run(wf, [:a], middlewares: [deps_mw])
 
-    assert %{kind: :throw} = attempt_error(wf, :a)
+    assert %{kind: :throw, stacktrace: st} = attempt_error(wf, :a)
+    assert st =~ "13_middlewares_test.exs"
   end
 
   test "a middleware wrapping a body and returning an invalid value fails the alternative with kind :bad_return" do
