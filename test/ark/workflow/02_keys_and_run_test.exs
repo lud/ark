@@ -142,15 +142,14 @@ defmodule Ark.Workflow.KeysAndRunTest do
     wf =
       Workflow.new()
       |> Workflow.add_rule(:top, %{
-        alts: [main: %{deps: [{:leaf, %{id: 1}}], body: ok_body(1)}]
+        alts: [main: %{deps: [:leaf], body: ok_body(1)}]
       })
       |> Workflow.add_rule(:leaf, %{alts: [main: %{deps: [], body: error_body(:oops)}]})
 
-    assert {:error, %ComputationError{} = e, _} = Workflow.run(wf, [:top])
+    assert {:error, %ComputationError{} = e, _} = Workflow.run(wf, [{:top, %{id: 1}}])
     message = Exception.message(e)
 
-    assert message =~ ":top"
-    assert message =~ "{:leaf, %{id: 1}}"
+    assert message =~ "{:top, %{id: 1}}"
     refute message =~ "default"
 
     assert {:error, %GraphError{reason: {:unknown_rule, _}} = e, _} =
