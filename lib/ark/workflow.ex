@@ -36,9 +36,25 @@ defmodule Ark.Workflow do
     alt: nil
   )
 
-  Record.defrecordp(:dep, alias: nil, key: nil, source: nil)
+  # Represents a static dependency of an alternative
+  Record.defrecordp(:dep,
+    # The name under which the dependency value is exposed in the accumulator
+    alias: nil,
 
-  Record.defrecordp(:dyn, callback: nil)
+    # The dependency full key
+    key: nil,
+
+    # How the dependency was declared: :key for a bare key (exposed under its
+    # own name), :alias for an entry of an alias map
+    source: nil
+  )
+
+  # Represents a dependency function, resolved to deps at run time
+  Record.defrecordp(:dyn,
+    # The function or MFA tuple called with the params, the accumulator and the
+    # context, returning the deps to pull
+    callback: nil
+  )
 
   def new do
     new([])
@@ -119,15 +135,18 @@ defmodule Ark.Workflow do
   end
 
   def fetch(%__MODULE__{} = wf, key) do
-    %{default_ns: default_ns} = wf
-    {ns, name, _} = fk = full_key(key, default_ns)
-    rule_key = {ns, name}
+    case normalize_key(key, wf.default_ns) do
+      {:ok, fk} -> fetch_result(wf, fk)
+      {:error, reason} -> {:error, %GraphError{reason: reason}}
+    end
+  end
 
-    # TODO this should not be a graph error, and the double :error vs {:error,
-    # _} is not great
+  # TODO this should not be a graph error, and the double :error vs {:error,
+  # _} is not great
+  defp fetch_result(wf, {ns, name, _} = fk) do
     case Map.fetch(wf.store.results, fk) do
       {:ok, result_tuple} -> result_tuple
-      :error when is_map_key(wf.rules, rule_key) -> :error
+      :error when is_map_key(wf.rules, {ns, name}) -> :error
       :error -> {:error, %GraphError{reason: {:unknown_rule, fk}}}
     end
   end
@@ -383,17 +402,34 @@ defmodule Ark.Workflow do
     [dep(alias: key, key: full_key(key, ns), source: :key)]
   end
 
-  defp full_key(name, ns) when is_atom(name) do
+  defp normalize_key(key, ns) do
+    {:ok, full_key(key, ns)}
+  catch
+    {:invalid_key, _} = reason -> {:error, reason}
+    {:invalid_params, _} = reason -> {:error, reason}
+  end
+
+  defp full_key(name, ns) when is_name(name) do
     {ns, name, %{}}
   end
 
-  defp full_key({name, params}, ns) when is_atom(name) and is_map(params) do
-    {ns, name, params}
+  defp full_key({name, params} = key, ns) when is_name(name) do
+    {ns, name, valid_params!(params, key)}
   end
 
-  defp full_key({ns, name, params} = key, _ns)
-       when is_atom(name) and is_atom(ns) and is_map(params) do
-    key
+  defp full_key({ns, name, params} = key, _ns) when is_name(ns) and is_name(name) do
+    {ns, name, valid_params!(params, key)}
+  end
+
+  defp full_key(other, _ns) do
+    throw({:invalid_key, other})
+  end
+
+  defp valid_params!(params, key) do
+    case validate_params(params) do
+      {:ok, _} -> params
+      {:error, _} -> throw({:invalid_params, key})
+    end
   end
 
   defp run_loop([frame(key: key) = x], %{results: results}, _wf)
@@ -659,14 +695,15 @@ defmodule Ark.Workflow do
   end
 
   defp prerun_check_target!(target, wf) do
-    with {:error, reason} <- validate_static_key(target) do
-      throw({:stop_run, %GraphError{reason: reason}, wf})
-    end
+    case normalize_key(target, wf.default_ns) do
+      {:ok, {ns, name, _} = key} when not is_map_key(wf.rules, {ns, name}) ->
+        throw({:stop_run, %GraphError{reason: {:unknown_rule, key}}, wf})
 
-    {ns, name, _} = key = full_key(target, wf.default_ns)
+      {:ok, _} ->
+        :ok
 
-    if not Map.has_key?(wf.rules, {ns, name}) do
-      throw({:stop_run, %GraphError{reason: {:unknown_rule, key}}, wf})
+      {:error, reason} ->
+        throw({:stop_run, %GraphError{reason: reason}, wf})
     end
   end
 

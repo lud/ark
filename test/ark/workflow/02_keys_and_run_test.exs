@@ -372,7 +372,6 @@ defmodule Ark.Workflow.KeysAndRunTest do
                Workflow.fetch(wf, {NsA, :ok, %{}})
     end
 
-    @tag :skip
     test "returns {:error, graph_error} for an invalid key", %{wf: wf} do
       assert {:error, %GraphError{reason: {:invalid_key, "ok"}}} =
                Workflow.fetch(wf, "ok")
@@ -389,7 +388,6 @@ defmodule Ark.Workflow.KeysAndRunTest do
   end
 
   describe "attempts" do
-    @tag :skip
     test "returns the failure record of each attempted alternative" do
       wf =
         Workflow.new()
