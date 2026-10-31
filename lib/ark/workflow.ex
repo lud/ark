@@ -401,6 +401,47 @@ defmodule Ark.Workflow do
     end
   end
 
+  def failures(%__MODULE__{} = wf, key) do
+    with {:ok, key} <- check_key(wf, key) do
+      if is_map_key(wf.failed, key) do
+        {:ok, collect_failures([key], wf, %{})}
+      else
+        {:error, :not_failed}
+      end
+    end
+  end
+
+  defp collect_failures([], _wf, acc) do
+    acc
+  end
+
+  defp collect_failures([key | keys], wf, acc) when is_map_key(acc, key) do
+    collect_failures(keys, wf, acc)
+  end
+
+  defp collect_failures([key | keys], wf, acc) do
+    case failed_attempts(wf, key) do
+      {:ok, attempts} ->
+        deps =
+          for {_, {:dep_failed, dep}} <- attempts do
+            dep
+          end
+
+        collect_failures(deps ++ keys, wf, Map.put(acc, key, attempts))
+
+      :error ->
+        collect_failures(keys, wf, acc)
+    end
+  end
+
+  defp failed_attempts(wf, key) do
+    if is_map_key(wf.failed, key) do
+      {:ok, Map.get(wf.attempts, key, %{})}
+    else
+      Persistence.orphan_failed_attempts(wf, key)
+    end
+  end
+
   defp check_key(wf, key) do
     case check_target(wf, key) do
       {:ok, key} -> {:ok, key}
@@ -448,7 +489,7 @@ defmodule Ark.Workflow do
 
       case run_targets(targets, st) do
         {:ok, st} -> {:ok, save(wf, st)}
-        {:failed, target, st} -> {:error, computation_error(target, st), save(wf, st)}
+        {:failed, target, st} -> {:error, ComputationError.new(target), save(wf, st)}
       end
     else
       {:error, e} -> {:error, e, wf}
@@ -798,83 +839,6 @@ defmodule Ark.Workflow do
   end
 
   # -- Errors ----------------------------------------------------------------
-
-  defp computation_error(target, st) do
-    causes = target |> causes(st) |> Enum.uniq_by(&{&1.key, &1.alternative})
-    {lines, _} = describe(target, st, 1, %{})
-    ComputationError.new(target, causes, render(lines))
-  end
-
-  defp causes(key, st) do
-    case st.failed do
-      %{^key => {:all_alternatives_failed, alts}} ->
-        attempts = Map.get(st.attempts, key, %{})
-        Enum.flat_map(alts, &alt_causes(key, &1, attempts, st))
-
-      _ ->
-        []
-    end
-  end
-
-  defp alt_causes(key, alt, attempts, st) do
-    case attempts do
-      %{^alt => {:dep_failed, dep}} ->
-        causes(dep, st)
-
-      %{^alt => {:computation_error, error}} ->
-        [%{key: key, alternative: alt, error: error}]
-
-      _ ->
-        []
-    end
-  end
-
-  defp describe(key, st, depth, seen) do
-    case st.failed do
-      %{^key => {:all_alternatives_failed, alts}} ->
-        attempts = Map.get(st.attempts, key, %{})
-        seen = Map.put(seen, key, true)
-
-        Enum.reduce(alts, {[{depth, "#{format_key(key)} failed:"}], seen}, fn alt,
-                                                                              {lines,
-                                                                               seen} ->
-          describe_attempt(Map.get(attempts, alt), alt, st, depth + 1, lines, seen)
-        end)
-        |> then(fn {lines, seen} -> {:lists.reverse(lines), seen} end)
-
-      _ ->
-        {[], seen}
-    end
-  end
-
-  defp describe_attempt({:dep_failed, dep}, alt, st, depth, lines, seen) do
-    lines = [
-      {depth, "alternative #{inspect(alt)}: dependency #{format_key(dep)} failed"} | lines
-    ]
-
-    if is_map_key(seen, dep) do
-      {[{depth + 1, "(failure described above)"} | lines], seen}
-    else
-      {sub, seen} = describe(dep, st, depth + 1, seen)
-      {:lists.reverse(sub, lines), seen}
-    end
-  end
-
-  defp describe_attempt({:computation_error, error}, alt, _st, depth, lines, seen) do
-    {[{depth, "alternative #{inspect(alt)}: #{error.kind}: #{error.message}"} | lines],
-     seen}
-  end
-
-  defp describe_attempt(_, _alt, _st, _depth, lines, seen) do
-    {lines, seen}
-  end
-
-  defp render(lines) do
-    Enum.map_join(lines, "\n", fn {depth, text} ->
-      pad = String.duplicate("  ", depth)
-      pad <> String.replace(text, "\n", "\n" <> pad <> "  ")
-    end)
-  end
 
   @doc false
   def format_key({:default, name, params}) when params == %{} do
