@@ -575,11 +575,7 @@ defmodule Ark.Workflow do
 
   #
 
-  defp pull_deps(arm(deps: []) = arm, _store, _key, _wf) do
-    {:ready, arm}
-  end
-
-  defp pull_deps(arm(deps: [_ | _] = deps, acc: acc) = arm, store, key, wf) do
+  defp pull_deps(arm(deps: deps, acc: acc) = arm, store, key, wf) do
     case do_pull_deps(deps, acc, store, key, wf) do
       {:ok, remaining_deps, acc} ->
         arm = arm(arm, deps: remaining_deps, acc: acc)
@@ -616,14 +612,12 @@ defmodule Ark.Workflow do
   # from the static deps, and check new exposures against it in the dyn clause.
   defp do_pull_deps([dyn(callback: fun) | deps], acc, store, key, wf) do
     {ns, _, params} = key
-    value = call_dep(fun, params, acc, wf)
 
-    with {:ok, _} <- validate_returned_deps(value),
-         new_deps = normalize_deps(List.wrap(value), ns),
-         {:ok, new_deps} <- Ark.Ok.map_ok(new_deps, &check_known_rule(&1, wf)) do
-      do_pull_deps(new_deps ++ deps, acc, store, key, wf)
-    else
-      {:error, reason} -> {:error, :bad_return, {:bad_return, :deps, fun, value, reason}}
+    IO.puts("== dyn deps #{inspect(fun)}")
+
+    case call_dep(fun, params, acc, key, wf) do
+      {:ok, new_deps} -> do_pull_deps(new_deps ++ deps, acc, store, key, wf)
+      {:error, :bad_return, reason} = err -> err
     end
   end
 
@@ -644,10 +638,24 @@ defmodule Ark.Workflow do
     end
   end
 
-  defp call_dep(fun, params, acc, wf) do
+  defp call_dep(fun, params, acc, key, wf) do
     %{ctx: ctx} = wf
+    {ns, _, params} = key
 
-    call_impl(fun, {params, acc, ctx})
+    case call_impl(fun, {params, acc, ctx}) do
+      {:error, kind, e, stack} ->
+        raise "bad"
+
+      value ->
+        with {:ok, _} <- validate_returned_deps(value),
+             new_deps = normalize_deps(List.wrap(value), ns),
+             {:ok, new_deps} <- Ark.Ok.map_ok(new_deps, &check_known_rule(&1, wf)) do
+          {:ok, new_deps}
+        else
+          {:error, reason} ->
+            {:error, :bad_return, {:bad_return, :deps, fun, value, reason}}
+        end
+    end
   end
 
   defp validate_returned_deps({:ok, _} = value) do
@@ -666,11 +674,19 @@ defmodule Ark.Workflow do
     validate_static_keys([key])
   end
 
-  defp call_impl(fun, {params, acc, ctx}) when is_function(fun, 3) do
+  defp call_impl(fun, args3) do
+    do_call_impl(fun, args3)
+  rescue
+    e -> {:error, :exception, e, :__STACKTRACE__}
+  catch
+    kind, e -> {:error, kind, e, :__STACKTRACE__}
+  end
+
+  defp do_call_impl(fun, {params, acc, ctx}) when is_function(fun, 3) do
     fun.(params, acc, ctx)
   end
 
-  defp call_impl({m, f, a}, {params, acc, ctx}) do
+  defp do_call_impl({m, f, a}, {params, acc, ctx}) do
     apply(m, f, [params, acc, ctx | a])
   end
 
