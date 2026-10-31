@@ -143,7 +143,9 @@ defmodule Ark.Workflow do
 
   # TODO this should not be a graph error, and the double :error vs {:error,
   # _} is not great
-  defp fetch_result(wf, {ns, name, _} = fk) do
+  defp fetch_result(wf, fk) do
+    {ns, name, _} = fk
+
     case Map.fetch(wf.store.results, fk) do
       {:ok, result_tuple} -> result_tuple
       :error when is_map_key(wf.rules, {ns, name}) -> :error
@@ -151,8 +153,27 @@ defmodule Ark.Workflow do
     end
   end
 
-  def attempts(_wf, _key) do
-    raise "todo"
+  # TODO we need to normalize the API function names. "attempts" should return
+  # raw value. Since we return a result tuple, it should be fetch_attempts (and
+  # our fetch_attepts helper would be renamed)
+  #
+  # TODO "attempts" does not mean "failure". But "attempt" that we store are
+  # only failures, not successes. So we should rename to "failure".
+  def attempts(%__MODULE__{} = wf, key) do
+    case normalize_key(key, wf.default_ns) |> dbg() do
+      {:ok, fk} -> fetch_attempts(wf, fk)
+      {:error, reason} -> {:error, %GraphError{reason: reason}}
+    end
+  end
+
+  defp fetch_attempts(wf, fk) do
+    {ns, name, _} = fk
+
+    case wf.store.attempts do
+      %{^fk => found} -> {:ok, found}
+      _ when is_map_key(wf.rules, {ns, name}) -> {:ok, %{}}
+      _ -> {:error, %GraphError{reason: {:unknown_rule, fk}}}
+    end
   end
 
   def dump(_wf) do
@@ -471,7 +492,9 @@ defmodule Ark.Workflow do
           {:error, reason} = err ->
             IO.puts("== call failed")
 
-            store = put_attempt(store, key, alt_key, {:computation_error, reason})
+            store =
+              put_attempt(store, key, alt_key, {:computation_error, :user_term, reason})
+
             frame = frame(frame, arms: arms)
             run_loop([frame | frames], store, wf)
         end
@@ -671,6 +694,17 @@ defmodule Ark.Workflow do
 
   defp put_result(store, key, result) do
     %{store | results: Map.put(store.results, key, result)}
+  end
+
+  defp put_attempt(store, key, alt_key, {:computation_error, kind, reason}) do
+    error = %{
+      at: DateTime.utc_now(),
+      kind: kind,
+      message: Ark.Error.to_string(reason),
+      reason: reason
+    }
+
+    put_attempt(store, key, alt_key, {:computation_error, error})
   end
 
   defp put_attempt(store, key, alt_key, record) do

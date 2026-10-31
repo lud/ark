@@ -408,7 +408,6 @@ defmodule Ark.Workflow.KeysAndRunTest do
               }} = Workflow.attempts(wf, :a)
     end
 
-    @tag :skip
     test "returns an empty map for a key with no attempts" do
       wf = Workflow.add_rule(Workflow.new(), :a, const_rule(1))
       assert {:ok, %{}} == Workflow.attempts(wf, :a)
@@ -417,7 +416,6 @@ defmodule Ark.Workflow.KeysAndRunTest do
       assert {:ok, %{}} == Workflow.attempts(wf, :a)
     end
 
-    @tag :skip
     test "returns a graph error for a key with no registered rule" do
       assert {:error, %GraphError{reason: {:unknown_rule, {:default, :a, %{}}}}} =
                Workflow.attempts(Workflow.new(), :a)
