@@ -387,14 +387,13 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
         })
 
       wf = run!(wf, [:r])
-
+      wf |> dbg()
       verify(pid)
       assert :r2 == fetch!(wf, :r)
       assert {:ok, %{r1: {:computation_error, cleaned}}} = Workflow.attempts(wf, :r)
       cleaned
     end
 
-    @tag :skip
     test "raises fails the alternative with a :computation_error, and the next alternative is entered" do
       assert %{kind: :error, message: error} =
                failing_deps_attempt(fn _, _, _ -> raise "boom" end)

@@ -514,6 +514,12 @@ defmodule Ark.Workflow do
         {ns, name, _} = key
         e = %GraphError{rule: {ns, name}, key: key, alternative: alt_key, reason: reason}
         throw({:stop_run, e, %{wf | stack: [], store: store}})
+
+      {:error, :comp, {kind, e, stacktrace}} ->
+        IO.puts("== dyn dep call failed")
+        store = put_attempt(store, key, alt_key, {:computation_error, kind, e})
+        frame = frame(frame, arms: arms)
+        run_loop([frame | frames], store, wf)
     end
   end
 
@@ -617,7 +623,7 @@ defmodule Ark.Workflow do
 
     case call_dep(fun, params, acc, key, wf) do
       {:ok, new_deps} -> do_pull_deps(new_deps ++ deps, acc, store, key, wf)
-      {:error, :bad_return, reason} = err -> err
+      {:error, _, _} = err -> err
     end
   end
 
@@ -643,8 +649,8 @@ defmodule Ark.Workflow do
     {ns, _, params} = key
 
     case call_impl(fun, {params, acc, ctx}) do
-      {:error, kind, e, stack} ->
-        raise "bad"
+      {:error, :comp, e} = err ->
+        err
 
       value ->
         with {:ok, _} <- validate_returned_deps(value),
@@ -675,11 +681,14 @@ defmodule Ark.Workflow do
   end
 
   defp call_impl(fun, args3) do
-    do_call_impl(fun, args3)
+    case do_call_impl(fun, args3) do
+      {:error, :comp, _} -> exit(:invalid_return)
+      other -> other
+    end
   rescue
-    e -> {:error, :exception, e, :__STACKTRACE__}
+    e -> {:error, :comp, {:error, e, __STACKTRACE__}}
   catch
-    kind, e -> {:error, kind, e, :__STACKTRACE__}
+    kind, e -> {:error, :comp, {kind, e, __STACKTRACE__}}
   end
 
   defp do_call_impl(fun, {params, acc, ctx}) when is_function(fun, 3) do
