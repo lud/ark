@@ -540,8 +540,8 @@ records. The persisted state graph
 *is* the error tree; no aggregate error object is ever built or
 propagated. Each record points one level down: a consumer of `:b`, itself
 failed because of `:c`, records `{:dep_failed, :b}` only. The error that
-`run` returns for a failed target is derived from the records and
-describes the whole tree down to the leaves (§9).
+`run` returns for a failed target names the target only, and `failures`
+collects the records reachable from it (§9).
 
 All failure records share one shape, whatever user code produced them:
 a body or a dependency function, an `{:error, _}` return, a bad return,
@@ -746,6 +746,7 @@ load(workflow, data)                   :: {:ok, workflow} | {:error, codec_error
 clear_failure(workflow, key | pred)    :: {:ok, workflow} | {:error, :not_failed | graph_error}
 fetch(workflow, key)                   :: {:ok, value} | {:failed, failure_record} | :error | {:error, graph_error}
 attempts(workflow, key)                :: {:ok, %{alt_name => failure_record}} | {:error, graph_error}
+failures(workflow, key)                :: {:ok, %{key => %{alt_name => failure_record}}} | {:error, :not_failed | graph_error}
 ```
 
 These are the functions of the `Ark.Workflow` module.
@@ -873,6 +874,30 @@ gives the key's failure, `attempts` its record per alternative, and a
 read next, down to the leaf `:computation_error` records and their
 cleaned errors, with their `reason`.
 
+`failures` does that walk for one failed key, in the same key forms. It
+returns `{:ok, map}` from every failed key reachable from the given key
+through `{:dep_failed, dep_key}` records, the given key included, in full
+form, to its attempt records as `attempts` returns them. A key reached
+through several records appears once. The map describes causality: the
+entry of the given key tells why it failed, a `{:dep_failed, dep_key}`
+record names the entry to read next, and the `:computation_error`
+records are the root causes, with their cleaned errors:
+
+```elixir
+{:ok, failures} = Workflow.failures(wf, e.target)
+for {key, alts} <- failures, {alt, {:computation_error, error}} <- alts, do: {key, alt, error}
+```
+
+The map carries no order. `fetch` gives the order in which the
+alternatives of a key were tried, in `{:all_alternatives_failed, names}`.
+Orphaned records (§7) reachable from the given key are part of its
+failure, and are in the map: attempt records of removed alternatives,
+and keys whose rule was removed.
+
+`failures` returns `{:error, :not_failed}` for a key that is not failed:
+it has a value, has attempts but no result, or has no records. A key
+with no registered rule returns `{:error, graph_error}`.
+
 ### Errors
 
 Failures of user code are not errors of the API: they are failure
@@ -882,19 +907,10 @@ structs, so `Exception.message/1` formats them for logs:
 - **Computation error** (`Ark.Workflow.ComputationError`): a target
   could not be computed. This is the normal outcome of data that cannot
   be computed, and the cause is usually not the target itself but a key
-  below it. The error holds:
-  - `target`: the first target with no value;
-  - `causes`: the leaves of its failure tree, in evaluation order. Each
-    is the failed key, the alternative and its cleaned error (§7): a
-    `:computation_error` record, never a `:dep_failed` one. A target
-    whose alternatives failed on different branches has several causes.
-
-  Its message describes the tree from the target down to the causes. The
-  error is derived from the records (§7), so its message, and the `kind`,
-  `at` and `message` of each cause, its keys and its tree, are the same
-  whether the failures happened in this run or before a dump. The
-  `reason` of a cause is the original term for a failure recorded in the
-  current workflow value, and `nil` for a failure loaded from a dump.
+  below it. The error holds `target`: the first target with no value, in
+  full form. Its message names the target. The failure tree is read from
+  the workflow returned with the error, with `failures(workflow, target)`
+  (Reading, above).
 - **Graph error** (`Ark.Workflow.GraphError`): the code is wrong,
   whatever the data. It carries what is needed to debug the code, as
   described below. Graph errors are sorted by when they can be detected:
@@ -916,7 +932,7 @@ structs, so `Exception.message/1` formats them for logs:
   A graph error holds:
   - `rule`: the `{ns, name}` of the rule at fault, or `nil` when no rule
     is involved: an invalid identity, a target, a key given to `fetch`,
-    `attempts` or `clear_failure`, or `add_ns`;
+    `attempts`, `failures` or `clear_failure`, or `add_ns`;
   - `key`: the key being computed, with its params, for an error found
     during the run (3. above), `nil` otherwise;
   - `alternative`: the name of the alternative at fault, when the error
@@ -927,7 +943,7 @@ structs, so `Exception.message/1` formats them for logs:
 
   Key reasons are shared by static dependencies, keys returned by
   dependency functions, targets, and the keys given to `fetch`,
-  `attempts` and `clear_failure`:
+  `attempts`, `failures` and `clear_failure`:
 
   | Reason | For |
   | --- | --- |
@@ -1639,6 +1655,9 @@ helpers in `test/support` are left to the implementor.
   - ...are honored again when the alternative is added back, also after a
     dump and a load: it is not tried again
 - Failure records are not passed through a rule's `:dump` and `:load`
+- The failures of a key hold the orphaned records reachable from it:
+  attempt records of a removed alternative, and a key whose rule was
+  removed
 
 ### Run API and lifecycle (§9)
 
@@ -1660,21 +1679,36 @@ helpers in `test/support` are left to the implementor.
   the error being a computation error naming the target
 - When `:a` needs `:b`, `:b` needs `:c` and `:c` fails...
   - ...the failure of `:a` points to `:b` only
-  - ...the computation error for target `:a` has the error of `:c` as its
-    single cause, and its message describes the chain down to it
-- The computation error for a target whose alternatives failed on
-  different branches lists every leaf as a cause, in evaluation order
-- The computation error for a target that failed before a dump and a load
-  is the same as the one returned by the run that failed it, apart from
-  the `reason` of its causes, `nil` after the load
-- The computation error is derived from the records: for a target failed
-  by a key that failed in an earlier run, its causes are those of that
-  earlier run
-- A second `run` of a failed target returns the same computation error
+  - ...the failures of target `:a` hold the records of `:a`, `:b` and
+    `:c`, each pointing one level down, and the error of `:c` as the root
+    cause
+- The message of a computation error names its target
+- The failures of a target whose alternatives failed on different
+  branches hold every failed key reachable from it, with all its attempt
+  records
+- The failures of a target hold a key reached through several records
+  once
+- The failures of a key hold only the failed keys reachable from it
+- The failures of a key do not hold a dependency with a value, even when
+  some of its alternatives failed
+- The failures of a key hold the cleaned error of each root cause, with
+  its kind: `:user_term`, `:bad_return`, `:error`, `:throw` or `:exit`, its
+  message, its time and its `reason`
+- The computation error and the failures of a target that failed before
+  a dump and a load are the same as the ones returned by the run that
+  failed it, apart from the `reason` of the cleaned errors, `nil` after
+  the load
+- The failures of a target are derived from the records: a target failed
+  by a key that failed in an earlier run holds the records of that run
+- A second `run` of a failed target returns the same computation error,
+  and the same failures
 - The target of a computation error is the first target with no value
-- The causes of a computation error hold the cleaned error of each leaf,
-  with its kind: `:user_term`, `:bad_return`, `:error`, `:throw` or `:exit`,
-  and its `reason`
+- `failures` accepts the key forms that `run` accepts for targets
+- `failures` returns `{:error, :not_failed}`...
+  - ...for a key with a value
+  - ...for a key with attempts but no result
+  - ...for a key with no records
+- `failures` for a key with no registered rule returns a graph error
 - From a failed key, `fetch` and `attempts` walk the `{:dep_failed, key}`
   records down to the leaf: when `:a` needs `:b`, `:b` needs `:c` and the
   body of `:c` returns `{:error, %SomeError{}}`, the walk from `:a` finds

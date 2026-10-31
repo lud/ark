@@ -1,6 +1,5 @@
 defmodule Ark.Test.WorkflowHelpers do
   alias Ark.Workflow
-  alias Ark.Workflow.ComputationError
 
   def rule(deps, body) do
     %{alts: [default: %{deps: deps, body: body}]}
@@ -52,10 +51,6 @@ defmodule Ark.Test.WorkflowHelpers do
     %{cleaned | reason: nil}
   end
 
-  def without_reasons(%ComputationError{causes: causes} = e) do
-    %{e | causes: without_reasons(causes)}
-  end
-
   def without_reasons(map) when is_map(map) and not is_struct(map) do
     Map.new(map, fn {k, v} -> {k, without_reasons(v)} end)
   end
@@ -70,6 +65,19 @@ defmodule Ark.Test.WorkflowHelpers do
 
   def without_reasons(term) do
     term
+  end
+
+  def outline(failures) do
+    Map.new(failures, fn {key, alts} ->
+      {key,
+       Map.new(alts, fn
+         {alt, {:computation_error, %{reason: reason}}} ->
+           {alt, {:computation_error, reason}}
+
+         {alt, record} ->
+           {alt, record}
+       end)}
+    end)
   end
 
   def roundtrip(wf, fresh) do

@@ -273,7 +273,7 @@ defmodule Ark.Workflow.DumpLoadTest do
              Workflow.attempts(loaded, {:b, %{id: 1}})
   end
 
-  test "the computation error for a target that failed before a dump and a load is the same as the one returned by the run that failed it, apart from the reason of its causes" do
+  test "the computation error and the failures of a target that failed before a dump and a load are the same as the ones returned by the run that failed it, apart from the reason of the cleaned errors" do
     graph =
       Workflow.new()
       |> Workflow.add_rule(:a, %{
@@ -284,11 +284,15 @@ defmodule Ark.Workflow.DumpLoadTest do
       })
       |> Workflow.add_rule(:b, failing_rule(%{reason: "x"}))
 
-    {:error, %ComputationError{} = e1, wf} = Workflow.run(graph, [:a])
-    {:error, %ComputationError{} = e2, _} = Workflow.run(roundtrip(wf, graph), [:a])
+    {:error, %ComputationError{} = e1, wf1} = Workflow.run(graph, [:a])
+    {:error, %ComputationError{} = e2, wf2} = Workflow.run(roundtrip(wf1, graph), [:a])
 
-    assert without_reasons(e1) == e2
+    assert e1 == e2
     assert Exception.message(e1) == Exception.message(e2)
+
+    assert {:ok, failures} = Workflow.failures(wf1, :a)
+    assert 2 == map_size(failures)
+    assert {:ok, without_reasons(failures)} == Workflow.failures(wf2, :a)
   end
 
   test "the reason of a cleaned error is nil after a dump and a load, while its message, kind and time are unchanged" do
@@ -320,8 +324,13 @@ defmodule Ark.Workflow.DumpLoadTest do
                Map.take(loaded_cleaned, [:at, :kind, :message])
     end
 
-    assert {:error, %ComputationError{causes: causes}, _} = Workflow.run(loaded, [:a])
-    assert [nil, nil, nil, nil, nil] == Enum.map(causes, & &1.error.reason)
+    assert {:error, %ComputationError{}, loaded} = Workflow.run(loaded, [:a])
+    assert {:ok, %{{:default, :a, %{}} => alts}} = Workflow.failures(loaded, :a)
+
+    assert [nil, nil, nil, nil, nil] ==
+             (for({_, {:computation_error, cleaned}} <- alts) do
+                cleaned.reason
+              end)
   end
 
   test "a cleaned error whose reason holds a pid or a function does not make dump fail" do

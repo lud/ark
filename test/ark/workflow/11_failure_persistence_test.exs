@@ -431,4 +431,45 @@ defmodule Ark.Workflow.FailurePersistenceTest do
       assert [:removed, :a3] == logged(log)
     end
   end
+
+  test "the failures of a key hold the orphaned records reachable from it: attempt records of a removed alternative, and a key whose rule was removed" do
+    v1 =
+      Workflow.new()
+      |> Workflow.add_rule(
+        :a,
+        alts_rule([
+          {:gone, %{deps: [], body: error_body(:gone_reason)}},
+          {:kept, %{deps: [:orphan], body: ok_body(:a)}}
+        ])
+      )
+      |> Workflow.add_rule(:orphan, rule([:c], ok_body(:orphan)))
+      |> Workflow.add_rule(:c, failing_rule(:c_reason))
+
+    v2 =
+      Workflow.new()
+      |> Workflow.add_rule(:a, alts_rule([{:kept, %{deps: [], body: ok_body(:a)}}]))
+      |> Workflow.add_rule(:c, failing_rule(:c_reason))
+
+    {:error, %ComputationError{}, wf} = Workflow.run(v1, [:a])
+
+    capture_log(fn ->
+      wf = roundtrip(wf, v2)
+      a = {:default, :a, %{}}
+      c = {:default, :c, %{}}
+
+      assert {:ok, failures} = Workflow.failures(wf, :a)
+      assert 3 == map_size(failures)
+
+      assert %{
+               ^a => %{
+                 "gone" => {:computation_error, %{message: ":gone_reason"}},
+                 kept: {:dep_failed, orphan}
+               },
+               ^c => %{default: {:computation_error, %{message: ":c_reason"}}}
+             } = failures
+
+      assert 2 == map_size(failures[a])
+      assert [{:dep_failed, ^c}] = Map.values(failures[orphan])
+    end)
+  end
 end
