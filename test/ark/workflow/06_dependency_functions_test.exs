@@ -853,18 +853,30 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
     end
   end
 
-  test "a dependency function that raises, throws or exits records the same reason as a body would" do
-    assert %{kind: :error, reason: %DomainError{message: "domain failure"}} =
+  test "a dependency function that raises, throws or exits records the same reason and stacktrace as a body would" do
+    assert %{
+             kind: :error,
+             reason: %DomainError{message: "domain failure"},
+             stacktrace: st
+           } =
              deps_attempt_error(fn _, _, _ -> raise DomainError, "domain failure" end)
 
-    assert %{kind: :error, reason: %ArgumentError{}} =
+    assert st =~ "06_dependency_functions_test.exs"
+
+    assert %{kind: :error, reason: %ArgumentError{}, stacktrace: st} =
              deps_attempt_error(fn _, _, _ -> :erlang.error(:badarg) end)
 
-    assert %{kind: :throw, reason: {:thrown, 1}} =
+    assert st =~ "06_dependency_functions_test.exs"
+
+    assert %{kind: :throw, reason: {:thrown, 1}, stacktrace: st} =
              deps_attempt_error(fn _, _, _ -> throw({:thrown, 1}) end)
 
-    assert %{kind: :exit, reason: {:shutdown, :x}} =
+    assert st =~ "06_dependency_functions_test.exs"
+
+    assert %{kind: :exit, reason: {:shutdown, :x}, stacktrace: st} =
              deps_attempt_error(fn _, _, _ -> exit({:shutdown, :x}) end)
+
+    assert st =~ "06_dependency_functions_test.exs"
   end
 
   describe "within an alternative, dependencies are resolved left to right" do
