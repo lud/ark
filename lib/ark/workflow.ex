@@ -653,41 +653,38 @@ defmodule Ark.Workflow do
   #
 
   defp prerun_check!(wf, targets) do
-    rules = wf.rules
-
-    Enum.each(targets, fn target ->
-      with {:error, reason} <- validate_static_key(target) do
-        throw({:stop_run, %GraphError{reason: reason}, wf})
-      end
-
-      {ns, name, _} = key = full_key(target, wf.default_ns)
-
-      if not Map.has_key?(rules, {ns, name}) do
-        throw({:stop_run, %GraphError{reason: {:unknown_rule, key}}, wf})
-      end
-    end)
-
-    Enum.each(rules, fn {rule_key, rule} ->
-      Enum.each(rule.alts, fn {ak, %{deps: deps}} ->
-        Enum.each(deps, fn
-          dep(key: {dep_ns, dep_name, _} = dep_key) ->
-            if not Map.has_key?(rules, {dep_ns, dep_name}) do
-              e = %GraphError{
-                rule: rule_key,
-                alternative: ak,
-                reason: {:unknown_rule, dep_key}
-              }
-
-              throw({:stop_run, e, wf})
-            end
-
-          dyn() ->
-            :ok
-        end)
-      end)
-    end)
-
+    Enum.each(targets, &prerun_check_target!(&1, wf))
+    Enum.each(wf.rules, &prerun_check_rule_deps!(&1, wf))
     wf
+  end
+
+  defp prerun_check_target!(target, wf) do
+    with {:error, reason} <- validate_static_key(target) do
+      throw({:stop_run, %GraphError{reason: reason}, wf})
+    end
+
+    {ns, name, _} = key = full_key(target, wf.default_ns)
+
+    if not Map.has_key?(wf.rules, {ns, name}) do
+      throw({:stop_run, %GraphError{reason: {:unknown_rule, key}}, wf})
+    end
+  end
+
+  defp prerun_check_rule_deps!({rule_key, rule}, wf) do
+    Enum.each(rule.alts, fn {ak, %{deps: deps}} ->
+      Enum.each(deps, &check_dep!(&1, rule_key, ak, wf))
+    end)
+  end
+
+  defp check_dep!(dep(key: {ns, name, _} = key), rule_key, ak, wf) do
+    if not Map.has_key?(wf.rules, {ns, name}) do
+      e = %GraphError{rule: rule_key, alternative: ak, reason: {:unknown_rule, key}}
+      throw({:stop_run, e, wf})
+    end
+  end
+
+  defp check_dep!(dyn(), _rule_key, _ak, _wf) do
+    :ok
   end
 
   #
