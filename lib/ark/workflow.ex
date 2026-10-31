@@ -1,8 +1,7 @@
 defmodule Ark.Workflow do
-  alias Ark.Workflow.GraphError
   alias Ark.Workflow.ComputationError
+  alias Ark.Workflow.GraphError
   require Record
-  require Logger
 
   defstruct rules: %{},
             default_ns: :default,
@@ -41,7 +40,7 @@ defmodule Ark.Workflow do
 
   Record.defrecordp(:dyn, callback: nil)
 
-  def new() do
+  def new do
     new([])
   end
 
@@ -80,26 +79,22 @@ defmodule Ark.Workflow do
   end
 
   def run(wf, targets, opts \\ []) do
-    prerun_check!(wf)
+    prerun_check!(wf, targets)
     %{stack: stack, store: store, default_ns: default_ns} = wf
 
-    case run_targets(targets, store, wf) |> dbg() do
+    case run_targets(targets, store, wf) do
       {:ok, store} ->
         {:ok, %{wf | stack: [], store: store}}
 
       {:failed, key, store} ->
-        store |> dbg()
         ce = %ComputationError{target: key, causes: :foo}
-
         {:error, ce, %{wf | stack: [], store: store}}
-        |> dbg()
     end
   catch
     {:stop_run, e, wf} -> {:error, e, wf}
   end
 
   defp run_targets([target | targets] = all_targets, store, wf) do
-    target |> dbg()
     key = full_key(target, wf.default_ns)
 
     # Check if target already ran from a previous run() call
@@ -111,7 +106,7 @@ defmodule Ark.Workflow do
         {:failed, key, store}
 
       _ ->
-        {:ok, [], store} = run_loop([new_frame(key, store, wf)], store, wf) |> dbg()
+        {:ok, [], store} = run_loop([new_frame(key, store, wf)], store, wf)
 
         # running with the same target again to return from :failed from this
         # function if it failed and so skip computing other targets.
@@ -392,11 +387,12 @@ defmodule Ark.Workflow do
     {ns, name, %{}}
   end
 
-  defp full_key({name, params}, ns) do
+  defp full_key({name, params}, ns) when is_atom(name) and is_map(params) do
     {ns, name, params}
   end
 
-  defp full_key({_, _, _} = key, _ns) do
+  defp full_key({ns, name, params} = key, _ns)
+       when is_atom(name) and is_atom(ns) and is_map(params) do
     key
   end
 
@@ -596,13 +592,13 @@ defmodule Ark.Workflow do
   defp do_pull_deps([dyn(callback: fun) = dep | deps], acc, store, key, wf) do
     {ns, _, params} = key
 
-    new_deps = call_dep(fun, params, acc, wf) |> dbg()
-    new_deps = normalize_deps([new_deps], ns) |> dbg()
+    new_deps = call_dep(fun, params, acc, wf)
+    new_deps = normalize_deps([new_deps], ns)
 
     do_pull_deps(new_deps ++ deps, acc, store, key, wf)
   end
 
-  defp do_pull_deps([], acc, _store, key, wf) do
+  defp do_pull_deps([], acc, _store, _key, _wf) do
     {:ok, [], acc}
   end
 
@@ -656,24 +652,40 @@ defmodule Ark.Workflow do
 
   #
 
-  defp prerun_check!(wf) do
+  defp prerun_check!(wf, targets) do
     rules = wf.rules
 
-    orphan_static_deps =
-      for {{ns, k}, rule} <- rules,
-          {ak, %{deps: deps}} <- rule.alts,
-          dep(key: {dep_ns, dep_name, _} = dep_key) <- deps,
-          not Map.has_key?(rules, {dep_ns, dep_name}) do
-        {ns, k, ak, dep_key}
+    Enum.each(targets, fn target ->
+      with {:error, reason} <- validate_static_key(target) do
+        throw({:stop_run, %GraphError{reason: reason}, wf})
       end
 
-    if orphan_static_deps != [] do
-      [{ns, k, ak, dep_key} | _] = orphan_static_deps
+      {ns, name, _} = key = full_key(target, wf.default_ns)
 
-      e = %GraphError{rule: {ns, k}, alternative: ak, reason: {:unknown_rule, dep_key}}
+      if not Map.has_key?(rules, {ns, name}) do
+        throw({:stop_run, %GraphError{reason: {:unknown_rule, key}}, wf})
+      end
+    end)
 
-      throw({:stop_run, e, wf})
-    end
+    Enum.each(rules, fn {rule_key, rule} ->
+      Enum.each(rule.alts, fn {ak, %{deps: deps}} ->
+        Enum.each(deps, fn
+          dep(key: {dep_ns, dep_name, _} = dep_key) ->
+            if not Map.has_key?(rules, {dep_ns, dep_name}) do
+              e = %GraphError{
+                rule: rule_key,
+                alternative: ak,
+                reason: {:unknown_rule, dep_key}
+              }
+
+              throw({:stop_run, e, wf})
+            end
+
+          dyn() ->
+            :ok
+        end)
+      end)
+    end)
 
     wf
   end

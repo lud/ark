@@ -3,6 +3,12 @@ defmodule Ark.Workflow.ComputationError do
 
   @impl true
   def message(e) do
-    "todo error message: #{inspect(e.target)} "
+    inspect_target =
+      case e.target do
+        {:default, name, params} -> {name, params}
+        target -> target
+      end
+
+    "todo error message: #{inspect(inspect_target)}"
   end
 end

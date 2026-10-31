@@ -138,7 +138,6 @@ defmodule Ark.Workflow.KeysAndRunTest do
     end
   end
 
-  @tag :skip
   test "an error message prints keys of :default without their namespace" do
     wf =
       Workflow.new()
@@ -174,7 +173,6 @@ defmodule Ark.Workflow.KeysAndRunTest do
       %{pid: pid, wf: wf}
     end
 
-    @tag :skip
     test "for a target with no registered rule", %{pid: pid, wf: wf} do
       for {target, key} <- [
             {:missing, {:default, :missing, %{}}},
@@ -189,7 +187,6 @@ defmodule Ark.Workflow.KeysAndRunTest do
       verify(pid)
     end
 
-    @tag :skip
     test "for a target with a string ns or name", %{pid: pid, wf: wf} do
       for target <- [
             "first",
@@ -204,7 +201,6 @@ defmodule Ark.Workflow.KeysAndRunTest do
       verify(pid)
     end
 
-    @tag :skip
     test "for a target with params containing a pid, port, reference or function", %{
       pid: pid,
       wf: wf
@@ -218,7 +214,6 @@ defmodule Ark.Workflow.KeysAndRunTest do
       verify(pid)
     end
 
-    @tag :skip
     test "for a malformed target", %{pid: pid, wf: wf} do
       for {target, tag} <- [
             {nil, :invalid_key},

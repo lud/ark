@@ -22,10 +22,7 @@ defmodule Ark.Test.WorkflowHelpers do
   end
 
   def deps_body do
-    fn _, deps, _ ->
-      deps |> IO.inspect(limit: :infinity, label: "received deps")
-      {:ok, deps}
-    end
+    fn _, deps, _ -> {:ok, deps} end
   end
 
   def params_body do
