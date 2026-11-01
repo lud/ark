@@ -524,9 +524,8 @@ add_rule(graph, :report, %{
 `context` is the third argument: a map given by user code to the run,
 passed as-is to every body and dependency function. Its content is up to
 user code; the engine adds nothing to it. It is distinct from `deps`
-(pure dependency values) and is never persisted. Logging and telemetry
-are middlewares (§9), and a middleware can change the context seen by
-user code (`update_args`).
+(pure dependency values) and is never persisted. The call wrapper (§9)
+can change the context seen by user code.
 
 An alternative does not see why previous alternatives failed. Data that
 several alternatives use is a separate rule they depend on (§4).
@@ -538,7 +537,7 @@ several alternatives use is a separate rule they depend on (§4).
 ```
 failure_record ::=
   | {:dep_failed, dep_key}                 # a hard dep is failed (points down the tree)
-  | {:computation_error, cleaned_error}    # the body, a dependency function or a middleware failed
+  | {:computation_error, cleaned_error}    # the body, a dependency function or the call wrapper failed
   | {:all_alternatives_failed, [alt_name]} # key-level: every alternative failed
 ```
 
@@ -609,7 +608,7 @@ The engine — never user code — normalizes failures at the boundary:
 
 - `{:error, reason}` returned → `kind: :user_term`. The wrap itself is
   the `:user_term` signal — it is the only case that wraps.
-- any other return from a body, or from a middleware wrapping a body →
+- any other return from a body, or from the call wrapper around a body →
   `kind: :bad_return`.
 - raise → `kind: :error`; caught throw → `:throw`; caught exit → `:exit`.
 
@@ -753,7 +752,7 @@ Invariants:
 ## 9. Engine API and lifecycle
 
 ```
-new(opts)                              :: workflow                   # e.g. dump check (§10)
+new(opts)                              :: workflow                   # call wrapper, dump check (§10)
 add_rule(workflow, identity, rule)     :: workflow                   # identity: name | {ns, name}
 add_ns(workflow, ns, callback)         :: workflow
 run(workflow, targets, opts)           :: {:ok, workflow} | {:error, error, workflow}
@@ -763,6 +762,7 @@ clear_failure(workflow, key | pred)    :: {:ok, workflow} | {:error, :not_failed
 fetch(workflow, key)                   :: {:ok, value} | {:failed, failure_record} | :error | {:error, graph_error}
 attempts(workflow, key)                :: {:ok, %{alt_name => failure_record}} | {:error, graph_error}
 failures(workflow, key)                :: {:ok, %{key => %{alt_name => failure_record}}} | {:error, :not_failed | graph_error}
+invoke(call)                           :: result                     # in a call wrapper
 ```
 
 These are the functions of the `Ark.Workflow` module.
@@ -775,7 +775,7 @@ other. There is no separate resume function.
 
 ```elixir
 wf = Workflow.new() |> Workflow.add_rule(...)   # or @graph, built at compile time
-{:ok, wf} = Workflow.run(wf, targets, context: %{}, middlewares: [])
+{:ok, wf} = Workflow.run(wf, targets, context: %{}, call_wrapper: &MyApp.wrap/3)
 {:ok, data} = Workflow.dump(wf)
 {:ok, wf} = Workflow.load(@graph, data)
 {:ok, wf} = Workflow.clear_failure(wf, &match?({_, :b, _}, &1))
@@ -856,8 +856,8 @@ graph built with `add_ns` can still be stored in a module attribute
   persisted: they may change between resumes. `run` returns
   `{:ok, workflow}` once every target has a value, or stops at the first
   failed target.
-- `run` options: `context` (§6, default `%{}`) and `middlewares` (below,
-  default none).
+- `run` options: `context` (§6, default `%{}`) and `call_wrapper`
+  (below, default the one given to `new`).
 - The workflow is always returned: user code reads values with `fetch`. To compute independent targets and tolerate
   some failures, user code runs them one at a time; recorded values are
   shared between runs.
@@ -944,7 +944,9 @@ structs, so `Exception.message/1` formats them for logs:
      error with the workflow, holding every fact recorded so far, and
      nothing for the key whose dependency function is at fault.
 
-  `run` never raises.
+  `run` never raises because of a problem in the graph: graph errors
+  are returned. It raises only for arguments of the wrong type, such as
+  a target list that is not a list or an invalid option.
 
   A graph error holds:
   - `rule`: the `{ns, name}` of the rule at fault, or `nil` when no rule
@@ -995,13 +997,13 @@ structs, so `Exception.message/1` formats them for logs:
 
   | Reason | For |
   | --- | --- |
-  | `{:bad_return, :deps, fun, retval, key_reason}` | A dependency function, or a `:deps` middleware wrapping it, returned an invalid dependency (§5). `fun` is the dependency function as written in the `deps` list, `retval` the whole returned value, `key_reason` one of the key reasons except `:shadowing` |
+  | `{:bad_return, :deps, fun, retval, key_reason}` | A dependency function, or the call wrapper around it, returned an invalid dependency (§5). `fun` is the dependency function as written in the `deps` list, `retval` the whole returned value, `key_reason` one of the key reasons except `:shadowing` |
   | `{:shadowing, exposure, exposure}` | Two different keys of the alternative exposed under the same `deps` key, one of them returned by a dependency function (§4, §5) |
   | `{:cycle, key, stack}` | `key` demanded while in progress (§5). `stack` lists the keys being computed, in demand order, from the target down to the demanding key, the `key` of the error |
 - **Codec error** (`Ark.Workflow.CodecError`): a dump or a load failed: a
   value that cannot be encoded, a rule's `:dump` or `:load` that raises,
-  a malformed dump, a value that cannot be decoded. Returned by `dump`,
-  by `load`, or by the `run` that first uses a value decoded lazily.
+  a malformed dump, a value that cannot be decoded. Returned by `dump` or
+  by `load`.
 
 ### Dump and load
 
@@ -1019,10 +1021,9 @@ structs, so `Exception.message/1` formats them for logs:
   2. decodes every key with the generic decoder, and matches identities
      and alternative names against the rules of the workflow (§3);
   3. decodes the recorded values of rules in the workflow: generic
-     decoder, then the rule's `:load`. Whether values are decoded at load
-     or when first used is up to the implementation. Decoding at load is
-     suggested: bad data fails early, and decoding is cheap since `:load`
-     does not read external state (§10).
+     decoder, then the rule's `:load`. A value that cannot be decoded
+     makes `load` return a codec error: bad data fails early, and
+     decoding is cheap since `:load` does not read external state (§10).
 
   Records of rules or alternatives not in the workflow (removed from the
   code) are kept as orphaned records (§7), and `load` emits one warning
@@ -1083,51 +1084,47 @@ predicate selected nothing. A script clearing several keys can ignore
 `:not_failed`, e.g. for a consumer already cleared by the propagation from
 its dependency. A key with no registered rule is a graph error.
 
-### Middlewares
+### Call wrapper
 
-A `run` option sets a list of **middlewares**. They wrap every call to
-user code, bodies and dependency functions alike (§4):
+A **call wrapper** wraps every call to user code, bodies and dependency
+functions alike (§4):
 
 ```elixir
 fn kind, meta, call -> result end
 # kind: :computation (a body) | :deps (a dependency function)
 # meta: %{key: key, alternative: alt_name}
-# call: {module, function, args} | {fun, args}, invoked with apply
+# call: {module, function, args} | {fun, args}
 ```
 
-Before calling anything, the engine builds the whole chain as nested
-tuples, with no closures. Each middleware layer is an MFA on an
-engine-owned module, whose `args` hold the next call; the innermost call
-is the user code, with the arguments of the actual call:
+The `call_wrapper` option of `new` sets the default wrapper of the
+workflow. The `call_wrapper` option of `run` replaces it for that run,
+and `nil` runs without wrapper. Like a body, a wrapper is an anonymous
+function, a remote capture or a `{module, function, extra_args}` tuple,
+called with `[kind, meta, call | extra_args]`. Given to `new` as a tuple
+or a capture, it is stored with the graph in a module attribute (§4).
+Given to `run`, it can close over runtime data, such as a logger or a
+pid to send events to. `new` and `run` check its type only, a function
+of arity 3 or a `{atom, atom, list}` tuple, and raise an
+`Ark.Opts.Error` for anything else.
 
-```elixir
-{Ark.Workflow.Middleware, :call, [mw1, kind, meta,
-  {Ark.Workflow.Middleware, :call, [mw2, kind, meta,
-    {Mod, :fun, [params, deps, context | extra_args]}]}]}
-# or, innermost, {fun, [params, deps, context]}
-```
+`call` is the user code call, with the arguments of the actual call:
+`{Mod, :fun, [params, deps, context | extra_args]}` for a tuple, and
+`{fun, [params, deps, context]}` for a function. `invoke(call)` runs it.
+It is an `apply`, and lets raises, throws and exits through. A wrapper
+may change the arguments before invoking the call, e.g. the context, or
+return a result without invoking it. What the wrapper returns is the
+result of the call.
 
-A middleware receives the `call` that follows it: invoking it runs the
-next middleware, and the last middleware's `call` runs the user code.
-Middlewares apply in list order, the first one outermost. A middleware
-returns what the call would return, and may not invoke it at all.
+The wrapper runs inside the same boundary as user code: its raises,
+throws, exits and invalid returns are normalized the same way (§5, §7).
+A wrapper that handles the failures of user code rescues around
+`invoke`. The wrapper is not part of the state and is never dumped: after
+a load, calls are wrapped by the wrapper of the workflow given to
+`load`, or by the one given to `run`.
 
-The chain is plain data, readable before anything runs. The engine
-exposes helpers on it, also used by its own middlewares:
-
-- `innermost(call)` unwraps the middleware layers and returns the user
-  code call, e.g. for a logger;
-- `update_args(call, fun)` rewrites the arguments of the user code call
-  through the chain, e.g. to change `context`.
-
-Middlewares run inside the same boundary as user code: their raises and
-invalid returns are normalized the same way (§5, §7). They are not part
-of the graph and are never persisted.
-
-The engine provides logging and telemetry middlewares. Other uses, such
-as mocks in tests or caching external calls during development, are user
-code: caching depends on what the user wants, and the engine shares
-nothing between states.
+Logging, telemetry, mocks in tests and caching external calls are
+wrappers written by user code. Several wrappers compose into one: a
+wrapper calls the next one with the same `kind`, `meta` and `call`.
 
 ## 10. Encoding
 
@@ -1268,7 +1265,7 @@ the dump into that workflow (validate, decode) → `run`. Then:
 
 Requirements the test suite must express. Each one is observed through the
 API (§9): values and errors returned, calls made to user code (mocks,
-middlewares), warnings emitted. None of them inspects the internal shape
+call wrappers), warnings emitted. None of them inspects the internal shape
 of the state or the dump format (§8).
 
 Tests marked *(fixed dump)* need a dump built by hand. They are written
@@ -1799,12 +1796,10 @@ helpers in `test/support` are left to the implementor.
   - ...a malformed dump
   - ...a dump holding two entries for the same key, compared as decoded
     terms: also when one entry is stored as JSON and the other as ETF
-- A value whose rule's `:load` fails makes `load`, or the `run` that first
-  uses the value, return a codec error, never turning the key into a
-  failure
+- A value whose rule's `:load` fails makes `load` return a codec error,
+  never turning the key into a failure
 - A value of a rule in the workflow whose ETF references an atom that
-  does not exist makes `load`, or the `run` that first uses the value,
-  return a codec error *(fixed dump)*
+  does not exist makes `load` return a codec error *(fixed dump)*
 - Records of a rule removed from the code...
   - ...are loaded and kept as orphaned records
   - ...make `load` emit one warning listing the rules they belong to
@@ -1875,37 +1870,45 @@ helpers in `test/support` are left to the implementor.
 - `clear_failure` for a key with no registered rule returns a graph error
 - `clear_failure` result survives a dump and a load
 
-### Middlewares (§9)
+### Call wrapper (§9)
 
-- A middleware wraps...
+- The call wrapper wraps...
   - ...every body call, with kind `:computation`
   - ...every dependency function call, with kind `:deps`
-- A middleware receives meta with the computed key and the alternative
-  name
-- Middlewares apply in list order, the first one outermost
-- The call a middleware receives...
-  - ...is plain data: `{module, function, args}` or `{fun, args}`
-  - ...runs the next middleware when invoked, and the user code for the
-    last middleware
-- `innermost(call)` returns the user code call with its actual arguments
-- `update_args(call, fun)` rewrites the user code arguments through the
-  chain, e.g. to change the context seen by the body
-- A middleware that does not invoke the call...
+- The call wrapper receives meta with the computed key and the
+  alternative name
+- The call the wrapper receives is plain data with the arguments of the
+  actual call: `{module, function, args}` for a tuple, `{fun, args}` for
+  a function
+- `invoke(call)` runs the user code of the call, and lets its raises,
+  throws and exits through
+- A call wrapper that changes the arguments before invoking the call
+  changes what user code receives, e.g. the context
+- A call wrapper given as a `{module, function, extra_args}` tuple is
+  called with `extra_args` after `kind`, `meta` and `call`
+- The call wrapper given to `new`...
+  - ...wraps the calls of every run
+  - ...given as a tuple or a remote capture can be stored with the graph
+    in a module attribute
+- The call wrapper given to `run` replaces the one given to `new` for
+  that run
+- `run` with `call_wrapper: nil` calls user code without the wrapper
+  given to `new`
+- `new` and `run` raise an `Ark.Opts.Error` for a call wrapper that is
+  neither a function of arity 3 nor a `{module, function, list}` tuple
+- A call wrapper that does not invoke the call...
   - ...replaces the body result with its own return value
   - ...prevents the user code from running
-- A middleware that raises fails the alternative the same way user code
-  does
-- A middleware wrapping a body and returning an invalid value fails the
+- A call wrapper that raises, throws or exits fails the alternative the
+  same way user code does
+- A call wrapper around a body returning an invalid value fails the
   alternative with kind `:bad_return`
-- A middleware wrapping a dependency function and returning an invalid
+- A call wrapper around a dependency function returning an invalid
   dependency makes `run` stop with a graph error, with the reason the
   dependency function would have
-- A middleware that rescues a raise from user code and returns
+- A call wrapper that rescues a raise from user code and returns
   `{:ok, value}` records the value
-- A `:deps` middleware that does not invoke the call supplies the keys
-  to demand
-- Middlewares are not persisted: a run after a load uses only the
-  middlewares given to that run
-- The provided logging middleware logs each call to user code
-- The provided telemetry middleware emits events for each call to user
-  code
+- A call wrapper around a dependency function that does not invoke the
+  call supplies the keys to demand
+- The call wrapper is not dumped: after a load, calls are wrapped by the
+  wrapper of the workflow given to `load`, or by the one given to `run`

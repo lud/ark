@@ -546,28 +546,20 @@ defmodule Ark.Workflow.DumpLoadTest do
     end
   end
 
-  test "a value whose rule's :load fails makes load, or the run that first uses the value, return a codec error, never turning the key into a failure" do
+  test "a value whose rule's :load fails makes load return a codec error, never turning the key into a failure" do
     graph = fn load_fun ->
       Workflow.new()
       |> Workflow.add_rule(:a, %{
         alts: [default: %{deps: [], body: ok_body(1)}],
         load: load_fun
       })
-      |> Workflow.add_rule(:b, rule([:a], deps_body()))
     end
 
     wf = run!(graph.(& &1), [:a])
     data = json(dump!(wf))
 
-    case Workflow.load(graph.(fn _ -> raise "incompatible" end), data) do
-      {:error, %CodecError{}} ->
-        :ok
-
-      {:ok, loaded} ->
-        assert {:error, %CodecError{}, loaded} = Workflow.run(loaded, [:b])
-        refute match?({:failed, _}, Workflow.fetch(loaded, :a))
-        refute match?({:failed, _}, Workflow.fetch(loaded, :b))
-    end
+    assert {:error, %CodecError{}} =
+             Workflow.load(graph.(fn _ -> raise "incompatible" end), data)
   end
 
   describe "records of a rule removed from the code" do
