@@ -162,6 +162,11 @@ defmodule Ark.Workflow.GraphBuildingTest do
       assert_invalid_rule(%{alts: [default: %{}]})
     end
 
+    test "with an alternative that is not a map is rejected" do
+      assert_invalid_rule(%{alts: [default: [deps: [], body: ok_body(1)]]})
+      assert_invalid_rule(%{alts: [default: nil]})
+    end
+
     test "with an unknown key in the rule map or in an alternative map is rejected" do
       assert_invalid_rule(%{alts: [default: %{deps: [], body: ok_body(1)}], other: 1})
       assert_invalid_rule(%{alts: [default: %{deps: [], body: ok_body(1), other: 1}]})

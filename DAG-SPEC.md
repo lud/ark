@@ -1302,6 +1302,7 @@ helpers in `test/support` are left to the implementor.
   - ...with `nil`, `true` or `false` as `ns`, `name` or alternative name
     is rejected
   - ...without `alts` is rejected
+  - ...with an alternative that is not a map is rejected
   - ...with an alternative without `deps` or without `body` is rejected
   - ...with an unknown key in the rule map or in an alternative map is
     rejected
