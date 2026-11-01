@@ -2,7 +2,7 @@ defmodule Ark.ErrorTest do
   use ExUnit.Case, async: true
   import ExUnit.CaptureLog
   alias Ark.Error
-  doctest Ark.Error
+  doctest Ark.Error, tags: [:capture_log]
 
   test "errors are unwrapped" do
     assert Error.to_string({:error, "hello"}) == Error.to_string("hello")
@@ -18,7 +18,7 @@ defmodule Ark.ErrorTest do
         e -> e
       end
 
-    assert "the message" == Error.to_string(err)
+    assert "the message" == Error.to_string(err, :public)
 
     # String
 

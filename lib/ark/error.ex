@@ -13,8 +13,7 @@ defmodule Ark.Error do
   `to_iodata/2` and `to_string/2` accept, among others:
 
     * a binary message, returned as-is
-    * an exception struct, rendered with `Exception.message/1`
-    * an `{exception, stacktrace}` pair, rendered as a banner
+    * an exception struct, rendered as a banner
     * a nested `{:error, reason}` or `{:shutdown, reason}` tuple
     * an `Ecto.Changeset` or `Ecto.InvalidChangesetError`, when Ecto is loaded
     * any other term, rendered with `inspect/1`
@@ -26,8 +25,6 @@ defmodule Ark.Error do
   back to `inspect/1` for any term. The public rendering is meant for messages
   shown to end users:
 
-    * an `{exception, stacktrace}` pair is rendered with `Exception.message/1`
-      instead of the banner
     * a `{tag, reason}` tuple with an atom tag is rendered as `"(tag) "`
       followed by the rendering of `reason`
     * atoms and numbers are rendered with `inspect/1`
@@ -153,15 +150,11 @@ defmodule Ark.Error do
       nil
   end
 
-  def to_iodata({%{__exception__: true} = e, stack}, :private) when is_list(stack) do
-    Exception.format_banner(:error, e, stack)
+  def to_iodata(%{__exception__: true} = e, :private) do
+    Exception.format_banner(:error, e)
   end
 
-  def to_iodata({%{__exception__: true} = e, stack}, :public) when is_list(stack) do
-    Exception.message(e)
-  end
-
-  def to_iodata(%{__exception__: true} = e, _audience) do
+  def to_iodata(%{__exception__: true} = e, :public) do
     Exception.message(e)
   end
 
@@ -189,6 +182,10 @@ defmodule Ark.Error do
 
   def to_iodata({tag, sub_reason}, :public) when is_atom(tag) do
     ["(", Atom.to_string(tag), ") ", to_iodata(sub_reason, :public)]
+  end
+
+  def to_iodata({%{__exception__: true} = e, _stack}, audience) do
+    to_iodata(e, audience)
   end
 
   def to_iodata(other, audience) do
