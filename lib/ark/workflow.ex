@@ -1,7 +1,6 @@
 defmodule Ark.Workflow do
   alias Ark.Workflow.ComputationError
   alias Ark.Workflow.GraphError
-  alias Ark.Workflow.Middleware
   alias Ark.Workflow.Persistence
 
   defstruct ns: :default,
@@ -10,7 +9,8 @@ defmodule Ark.Workflow do
             failed: %{},
             attempts: %{},
             orphans: %{},
-            dump_check: false
+            dump_check: false,
+            call_wrapper: nil
 
   @type t :: %__MODULE__{}
   @type key :: {atom, atom, map}
@@ -20,12 +20,18 @@ defmodule Ark.Workflow do
 
   def new(opts \\ []) do
     opts =
-      Ark.Opts.validate!(opts, %{dump_check: false}, [subject: "Ark.Workflow.new/1"], fn
-        :dump_check, value -> Ark.Opts.boolean(value)
-        _, _ -> :unknown
-      end)
+      Ark.Opts.validate!(
+        opts,
+        %{dump_check: false, call_wrapper: nil},
+        [subject: "Ark.Workflow.new/1"],
+        fn
+          :dump_check, value -> Ark.Opts.boolean(value)
+          :call_wrapper, value -> call_wrapper_opt(value)
+          _, _ -> :unknown
+        end
+      )
 
-    %__MODULE__{dump_check: opts.dump_check}
+    %__MODULE__{dump_check: opts.dump_check, call_wrapper: opts.call_wrapper}
   end
 
   def clear_failure(%__MODULE__{} = wf, predicate) when is_function(predicate, 1) do
@@ -33,7 +39,7 @@ defmodule Ark.Workflow do
   end
 
   def clear_failure(%__MODULE__{} = wf, key) do
-    with {:ok, key} <- check_key(wf, key) do
+    with {:ok, key} <- check_target(wf, key) do
       if is_map_key(wf.failed, key) do
         clear([key], wf)
       else
@@ -386,7 +392,7 @@ defmodule Ark.Workflow do
   # -- Reading ---------------------------------------------------------------
 
   def fetch(%__MODULE__{} = wf, key) do
-    with {:ok, key} <- check_key(wf, key) do
+    with {:ok, key} <- check_target(wf, key) do
       case wf do
         %{values: %{^key => value}} -> {:ok, value}
         %{failed: %{^key => record}} -> {:failed, record}
@@ -396,13 +402,13 @@ defmodule Ark.Workflow do
   end
 
   def attempts(%__MODULE__{} = wf, key) do
-    with {:ok, key} <- check_key(wf, key) do
+    with {:ok, key} <- check_target(wf, key) do
       {:ok, Map.get(wf.attempts, key, %{})}
     end
   end
 
   def failures(%__MODULE__{} = wf, key) do
-    with {:ok, key} <- check_key(wf, key) do
+    with {:ok, key} <- check_target(wf, key) do
       if is_map_key(wf.failed, key) do
         {:ok, collect_failures([key], wf, %{})}
       else
@@ -442,13 +448,6 @@ defmodule Ark.Workflow do
     end
   end
 
-  defp check_key(wf, key) do
-    case check_target(wf, key) do
-      {:ok, key} -> {:ok, key}
-      {:error, e} -> {:error, e}
-    end
-  end
-
   defp check_target(wf, key) do
     case parse_key(key, :default) do
       {:ok, {ns, name, _} = full} ->
@@ -469,7 +468,7 @@ defmodule Ark.Workflow do
     opts =
       Ark.Opts.validate!(
         opts,
-        %{context: %{}, middlewares: []},
+        %{context: %{}, call_wrapper: wf.call_wrapper},
         [subject: "Ark.Workflow.run/3"],
         &run_opt/2
       )
@@ -479,7 +478,7 @@ defmodule Ark.Workflow do
       st = %{
         rules: wf.rules,
         context: opts.context,
-        middlewares: opts.middlewares,
+        call_wrapper: opts.call_wrapper,
         values: wf.values,
         failed: wf.failed,
         attempts: wf.attempts,
@@ -502,12 +501,20 @@ defmodule Ark.Workflow do
     {:ok, value}
   end
 
-  defp run_opt(:middlewares, value) do
-    Ark.Opts.list_of(value, &{:ok, &1})
+  defp run_opt(:call_wrapper, value) do
+    call_wrapper_opt(value)
   end
 
   defp run_opt(_, _) do
     :unknown
+  end
+
+  defp call_wrapper_opt(value) do
+    if value == nil or callable?(value, 3) do
+      {:ok, value}
+    else
+      {:error, "a function of arity 3, a {module, function, args} tuple or nil"}
+    end
   end
 
   defp save(wf, st) do
@@ -628,17 +635,6 @@ defmodule Ark.Workflow do
 
       is_map_key(st.in_progress, key) ->
         throw({:graph_error, cycle_error(key, frame, st), st})
-
-      not is_map_key(st.rules, {elem(key, 0), elem(key, 1)}) ->
-        record =
-          computation_record(
-            :error,
-            "no rule registered for #{format_key(key)}",
-            %GraphError{reason: {:unknown_rule, key}},
-            nil
-          )
-
-        alt_failed(frame, record, st)
 
       true ->
         loop(push_frame(%{st | stack: [frame | st.stack]}, key))
@@ -792,7 +788,7 @@ defmodule Ark.Workflow do
 
   defp call_user(fun, args, kind, frame, cur, st) do
     meta = %{key: frame.key, alternative: cur.name}
-    {:ok, invoke(Middleware.chain(st.middlewares, kind, meta, innermost_call(fun, args)))}
+    {:ok, wrap(st.call_wrapper, kind, meta, innermost_call(fun, args))}
   catch
     kind, payload ->
       reason = Exception.normalize(kind, payload, __STACKTRACE__)
@@ -809,9 +805,6 @@ defmodule Ark.Workflow do
 
   defp format_reason(reason) do
     Ark.Error.to_string(reason)
-  catch
-    kind, payload ->
-      "#{inspect(reason)} (could not be formatted: #{kind}: #{inspect(payload)})"
   end
 
   defp format_stacktrace(stacktrace) do
@@ -831,11 +824,23 @@ defmodule Ark.Workflow do
     {m, f, args ++ extra}
   end
 
-  defp invoke({fun, args}) do
+  defp wrap(nil, _kind, _meta, call) do
+    invoke(call)
+  end
+
+  defp wrap(wrapper, kind, meta, call) when is_function(wrapper) do
+    wrapper.(kind, meta, call)
+  end
+
+  defp wrap({m, f, extra}, kind, meta, call) do
+    apply(m, f, [kind, meta, call | extra])
+  end
+
+  def invoke({fun, args}) when is_function(fun) do
     apply(fun, args)
   end
 
-  defp invoke({m, f, args}) do
+  def invoke({m, f, args}) do
     apply(m, f, args)
   end
 

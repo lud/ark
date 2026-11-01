@@ -9,21 +9,17 @@ defmodule Ark.Workflow.ClearFailure do
         %{wf | failed: Map.delete(wf.failed, key), attempts: Map.delete(wf.attempts, key)}
       end)
 
-    propagate(wf, Enum.map(keys, &id/1), %{})
+    propagate(wf, Enum.map(keys, &id/1))
   end
 
-  defp propagate(wf, [], _seen) do
+  defp propagate(wf, []) do
     wf
   end
 
-  defp propagate(wf, [id | rest], seen) when is_map_key(seen, id) do
-    propagate(wf, rest, seen)
-  end
-
-  defp propagate(wf, [id | rest], seen) do
+  defp propagate(wf, [id | rest]) do
     {wf, live} = clear_live(wf, id)
     {wf, orphans} = clear_orphans(wf, id)
-    propagate(wf, rest ++ live ++ orphans, Map.put(seen, id, true))
+    propagate(wf, rest ++ live ++ orphans)
   end
 
   defp clear_live(wf, id) do
