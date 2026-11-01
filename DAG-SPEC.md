@@ -613,11 +613,9 @@ The engine — never user code — normalizes failures at the boundary:
   `kind: :bad_return`.
 - raise → `kind: :error`; caught throw → `:throw`; caught exit → `:exit`.
 
-The message is `Ark.Error.to_string(term)`, for the `:private` audience:
-the term is `{exception, stacktrace}` for kind `:error`, so the message
-names the exception module, and the `reason` for every other kind. A
-string reason is its own message, and an exception reason gives its
-`Exception.message/1`.
+The message is `Ark.Error.to_string(reason)`, for the `:private`
+audience. An exception or a string shows its message, and any other term
+is rendered by `Ark.Error`.
 
 `stacktrace` is `nil` for `:user_term` and `:bad_return`: a returned
 value is not a crash. For `:error`, `:throw` and `:exit`, it is the
@@ -1479,14 +1477,13 @@ helpers in `test/support` are left to the implementor.
 - A body returning `{:ok, value}` records the value under the computed key
 - A body returning `{:error, reason}` fails the alternative...
   - ...with kind `:user_term` and no stacktrace
-  - ...with the exception message when `reason` is an exception struct
-  - ...with the `Ark.Error` rendering of `reason` for any other term
+  - ...with the `Ark.Error` rendering of `reason` as message
 - A body returning anything else fails the alternative with kind
   `:bad_return`, no stacktrace, and the `Ark.Error` rendering of the
   returned value as message
 - A body that...
-  - ...raises fails the alternative with kind `:error`, a message naming
-    the exception, and a formatted stacktrace
+  - ...raises fails the alternative with kind `:error`, a message showing
+    the exception message, and a formatted stacktrace
   - ...matches on unexpected params and raises `FunctionClauseError` is
     caught like any raise, with no argument value in its message or
     stacktrace

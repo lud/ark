@@ -348,10 +348,11 @@ defmodule Ark.Workflow.ComputationErrorTest do
 
       {_, wf} = run_failed(wf, [:a])
 
-      assert {:ok, %{default: {:computation_error, %{kind: :error} = error}}} =
-               Workflow.attempts(wf, :a)
-
-      assert error.message =~ "UndefinedFunctionError"
+      assert {:ok,
+              %{
+                default:
+                  {:computation_error, %{kind: :error, reason: %UndefinedFunctionError{}}}
+              }} = Workflow.attempts(wf, :a)
     end
   end
 end

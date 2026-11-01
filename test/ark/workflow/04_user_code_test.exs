@@ -42,18 +42,14 @@ defmodule Ark.Workflow.UserCodeTest do
                attempt_error(error_body(:some_reason))
     end
 
-    test "with the exception message when reason is an exception struct" do
-      reason = %DomainError{message: "the account is closed"}
-
-      assert %{kind: :user_term, message: "the account is closed"} =
-               attempt_error(error_body(reason))
-
-      reason = %ArgumentError{message: "bad arg"}
-      assert %{kind: :user_term, message: "bad arg"} = attempt_error(error_body(reason))
-    end
-
-    test "with the Ark.Error rendering of reason for any other term" do
-      for reason <- [{:not_found, 123}, "a string", %{a: 1}, [1, 2], nil, {:shutdown, :x}] do
+    test "with the Ark.Error rendering of reason as message" do
+      for reason <- [
+            %DomainError{message: "the account is closed"},
+            "a string",
+            {:not_found, 123},
+            %{a: 1},
+            nil
+          ] do
         assert %{kind: :user_term, message: error} = attempt_error(error_body(reason))
         assert Ark.Error.to_string(reason) == error
       end
@@ -70,19 +66,13 @@ defmodule Ark.Workflow.UserCodeTest do
   end
 
   describe "a body that" do
-    test "raises fails the alternative with kind :error, a message naming the exception, and a formatted stacktrace" do
+    test "raises fails the alternative with kind :error, a message showing the exception message, and a formatted stacktrace" do
       assert %{kind: :error, message: error, stacktrace: stacktrace} =
                attempt_error(fn _, _, _ -> raise "boom" end)
 
-      assert error =~ "(RuntimeError) boom"
+      assert error =~ "boom"
       refute error =~ "04_user_code_test.exs"
       assert stacktrace =~ "04_user_code_test.exs"
-
-      assert %{kind: :error, message: error} =
-               attempt_error(fn _, _, _ -> raise DomainError, "domain failure" end)
-
-      assert error =~ "DomainError"
-      assert error =~ "domain failure"
     end
 
     test "matches on unexpected params and raises FunctionClauseError is caught like any raise, with no argument value in its message or stacktrace" do
@@ -96,10 +86,14 @@ defmodule Ark.Workflow.UserCodeTest do
               %{
                 default:
                   {:computation_error,
-                   %{kind: :error, message: error, stacktrace: stacktrace}}
+                   %{
+                     kind: :error,
+                     reason: %FunctionClauseError{},
+                     message: error,
+                     stacktrace: stacktrace
+                   }}
               }} = Workflow.attempts(wf, key)
 
-      assert error =~ "FunctionClauseError"
       refute error =~ "s3cr3t"
       assert stacktrace =~ "04_user_code_test.exs"
       refute stacktrace =~ "s3cr3t"
@@ -159,7 +153,7 @@ defmodule Ark.Workflow.UserCodeTest do
     test "the reason of {:error, reason} for kind :user_term" do
       reason = %DomainError{message: "the account is closed"}
 
-      assert %{kind: :user_term, message: "the account is closed", reason: ^reason} =
+      assert %{kind: :user_term, reason: ^reason} =
                attempt_error(error_body(reason))
 
       assert %{kind: :user_term, reason: {:not_found, 123}} =
