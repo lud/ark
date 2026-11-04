@@ -401,6 +401,19 @@ defmodule Ark.Workflow.DumpLoadTest do
       end
     end
 
+    test "makes dump return a codec error wherever it sits: under a non-string map key, as a map key, in a struct field or in an improper list tail" do
+      bads = [%{atom_key: self()}, %{self() => 1}, %SomeStruct{id: self()}, [1 | self()]]
+
+      dumped =
+        Enum.reject(bads, fn bad ->
+          wf = Workflow.add_rule(Workflow.new(), :a, const_rule(bad))
+          wf = run!(wf, [{:a, %{id: 1}}])
+          match?({:error, %CodecError{}}, Workflow.dump(wf))
+        end)
+
+      assert [] == dumped
+    end
+
     test "dumps fine when the rule's :dump turns it into data" do
       pid = self()
 

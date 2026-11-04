@@ -1160,7 +1160,9 @@ Properties:
 - ETF bytes are deterministic within one OTP major release. The engine
   compares decoded terms, never bytes (§8).
 - Pids, ports, references and functions are rejected with an error
-  naming the key. A rule whose values contain them declares `:dump`.
+  naming the key, wherever they sit: map keys and values, struct fields,
+  tuples, list elements and improper list tails. A rule whose values
+  contain them declares `:dump`.
 
 ### Rule `:dump` and `:load`
 
@@ -1785,6 +1787,9 @@ helpers in `test/support` are left to the implementor.
   load and a dump *(fixed dump)*
 - A value containing a pid, port, reference or function...
   - ...makes `dump` return a codec error naming the key
+  - ...makes `dump` return a codec error wherever it sits: under a
+    non-string map key, as a map key, in a struct field or in an improper
+    list tail
   - ...dumps fine when the rule's `:dump` turns it into data
 - A rule's `:dump` that raises, or returns a pid, makes `dump` return a
   codec error naming the key
