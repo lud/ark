@@ -762,7 +762,7 @@ add_ns(workflow, ns, callback)         :: workflow
 run(workflow, targets, opts)           :: {:ok, workflow} | {:error, error, workflow}
 dump(workflow)                         :: {:ok, data} | {:error, codec_error}
 load(workflow, data)                   :: {:ok, workflow} | {:error, codec_error}
-clear_failure(workflow, key | pred)    :: {:ok, workflow} | {:error, :not_failed | graph_error}
+clear_failure(workflow, key | pred)    :: {:ok, workflow} | {:error, :not_failed}
 fetch(workflow, key)                   :: {:ok, value} | {:failed, failure_record} | :error
 attempts(workflow, key)                :: {:ok, %{alt_name => failure_record}}
 failures(workflow, key)                :: {:ok, %{key => %{alt_name => failure_record}}} | {:error, :not_failed}
@@ -952,9 +952,10 @@ structs, so `Exception.message/1` formats them for logs:
   `run` never raises because of a problem in the graph: graph errors
   are returned. It raises only for arguments of the wrong type, such as
   a target list that is not a list or an invalid option. `clear_failure`
-  returns its graph errors too. `fetch`, `attempts` and `failures` raise
-  the graph error of a malformed key, and have no other graph error
-  (Reading, above).
+  raises the graph error of a malformed key or of a key with no
+  registered rule (Clearing failures, below). `fetch`, `attempts` and
+  `failures` raise the graph error of a malformed key, and have no other
+  graph error (Reading, above).
 
   A graph error holds:
   - `rule`: the `{ns, name}` of the rule at fault, or `nil` when no rule
@@ -1087,7 +1088,12 @@ key, and `{:error, :not_failed}` when there was nothing to clear: the key
 has a value, has attempts but no result, has no records, or the
 predicate selected nothing. A script clearing several keys can ignore
 `:not_failed`, e.g. for a consumer already cleared by the propagation from
-its dependency. A key with no registered rule is a graph error.
+its dependency.
+
+The key is an argument of the code, not data: a term that is not a key,
+a key with invalid params, or a key with no registered rule makes
+`clear_failure` raise the graph error with its key reason (Errors,
+above), with `rule` set to `nil`.
 
 ### Call wrapper
 
@@ -1245,6 +1251,28 @@ the dump into that workflow (validate, decode) → `run`. Then:
 - **Rule builder helpers** — functions that build the rule map of §9,
   such as a shorthand for a single alternative. They will be specified
   later; this version has `add_rule` with the rule map only.
+
+### Post-implementation tasks
+
+- **Raise or return: one rule for graph errors.** Users need a clear
+  separation between what raises and what is returned: once the code is
+  set up properly, a call that passes its arguments correctly must never
+  raise. Go over every place that produces a graph error (§9, Errors)
+  and decide, for each, whether it raises or is returned. The goal is to
+  raise for every mistake in the code:
+  - `add_rule` and `add_ns` raise already;
+  - `fetch`, `attempts`, `failures` and `clear_failure` raise already for
+    the keys they are given;
+  - `run` returns, before evaluation, the unknown rules of static
+    dependencies and the invalid targets: candidates to raise.
+
+  The errors found during evaluation come from what dependency functions
+  return, so they depend on the data: `{:bad_return, :deps, ...}`, a
+  shadowing involving a returned key, a cycle. They stay returned, and
+  may become their own error family, distinct from the graph error, so
+  that a graph error always means a mistake in the code. Whether a cycle
+  between static dependencies only is found before evaluation, and
+  raises, is part of the task.
 
 ## 13. Differences from v1 (removal list)
 
@@ -1847,7 +1875,8 @@ helpers in `test/support` are left to the implementor.
   - ...for a predicate that selects no key
   - ...for a consumer already cleared by the propagation from its
     dependency
-- `clear_failure` for a key with no registered rule returns a graph error
+- `clear_failure` raises a graph error for an invalid key or a key with no
+  registered rule
 - `clear_failure` result survives a dump and a load
 
 ### Call wrapper (§9)

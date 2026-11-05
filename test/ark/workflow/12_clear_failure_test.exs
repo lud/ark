@@ -358,18 +358,18 @@ defmodule Ark.Workflow.ClearFailureTest do
     end
   end
 
-  test "clear_failure for a key with no registered rule returns a graph error" do
+  test "clear_failure raises a graph error for an invalid key or a key with no registered rule" do
     wf = Workflow.add_rule(Workflow.new(), :a, failing_rule())
 
-    assert {:error,
-            %GraphError{rule: nil, reason: {:unknown_rule, {:default, :missing, %{}}}}} =
-             Workflow.clear_failure(wf, :missing)
-
-    assert {:error, %GraphError{reason: {:unknown_rule, {NsA, :a, %{}}}}} =
-             Workflow.clear_failure(wf, {NsA, :a, %{}})
-
-    assert {:error, %GraphError{reason: {:invalid_key, "a"}}} =
-             Workflow.clear_failure(wf, "a")
+    for {given, reason} <- [
+          {:missing, {:unknown_rule, {:default, :missing, %{}}}},
+          {{NsA, :a, %{}}, {:unknown_rule, {NsA, :a, %{}}}},
+          {"a", {:invalid_key, "a"}},
+          {{:a, [id: 1]}, {:invalid_params, {:a, [id: 1]}}}
+        ] do
+      e = assert_raise GraphError, fn -> Workflow.clear_failure(wf, given) end
+      assert %GraphError{rule: nil, reason: ^reason} = e
+    end
   end
 
   test "clear_failure result survives a dump and a load" do
