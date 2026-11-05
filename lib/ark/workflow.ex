@@ -8,7 +8,6 @@ defmodule Ark.Workflow do
             values: %{},
             failed: %{},
             attempts: %{},
-            orphans: %{},
             dump_check: false,
             call_wrapper: nil
 
@@ -392,28 +391,33 @@ defmodule Ark.Workflow do
   # -- Reading ---------------------------------------------------------------
 
   def fetch(%__MODULE__{} = wf, key) do
-    with {:ok, key} <- check_target(wf, key) do
-      case wf do
-        %{values: %{^key => value}} -> {:ok, value}
-        %{failed: %{^key => record}} -> {:failed, record}
-        _ -> :error
-      end
+    key = read_key!(key)
+
+    case wf do
+      %{values: %{^key => value}} -> {:ok, value}
+      %{failed: %{^key => record}} -> {:failed, record}
+      _ -> :error
     end
   end
 
   def attempts(%__MODULE__{} = wf, key) do
-    with {:ok, key} <- check_target(wf, key) do
-      {:ok, Map.get(wf.attempts, key, %{})}
-    end
+    {:ok, Map.get(wf.attempts, read_key!(key), %{})}
   end
 
   def failures(%__MODULE__{} = wf, key) do
-    with {:ok, key} <- check_target(wf, key) do
-      if is_map_key(wf.failed, key) do
-        {:ok, collect_failures([key], wf, %{})}
-      else
-        {:error, :not_failed}
-      end
+    key = read_key!(key)
+
+    if is_map_key(wf.failed, key) do
+      {:ok, collect_failures([key], wf, %{})}
+    else
+      {:error, :not_failed}
+    end
+  end
+
+  defp read_key!(key) do
+    case parse_key(key, :default) do
+      {:ok, full} -> full
+      {:error, reason} -> raise GraphError, reason: reason
     end
   end
 
@@ -425,27 +429,19 @@ defmodule Ark.Workflow do
     collect_failures(keys, wf, acc)
   end
 
-  defp collect_failures([key | keys], wf, acc) do
-    case failed_attempts(wf, key) do
-      {:ok, attempts} ->
-        deps =
-          for {_, {:dep_failed, dep}} <- attempts do
-            dep
-          end
+  defp collect_failures([key | keys], wf, acc) when is_map_key(wf.failed, key) do
+    attempts = Map.get(wf.attempts, key, %{})
 
-        collect_failures(deps ++ keys, wf, Map.put(acc, key, attempts))
+    deps =
+      for {_, {:dep_failed, dep}} <- attempts do
+        dep
+      end
 
-      :error ->
-        collect_failures(keys, wf, acc)
-    end
+    collect_failures(deps ++ keys, wf, Map.put(acc, key, attempts))
   end
 
-  defp failed_attempts(wf, key) do
-    if is_map_key(wf.failed, key) do
-      {:ok, Map.get(wf.attempts, key, %{})}
-    else
-      Persistence.orphan_failed_attempts(wf, key)
-    end
+  defp collect_failures([_ | keys], wf, acc) do
+    collect_failures(keys, wf, acc)
   end
 
   defp check_target(wf, key) do
