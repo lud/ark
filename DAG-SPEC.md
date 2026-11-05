@@ -182,22 +182,25 @@ dependency function returning one of them returns an invalid key (§5).
 
 Dumps store identities and alternative names by their string form (§8):
 `:account` is `"account"`, `MyApp.Billing` is `"Elixir.MyApp.Billing"`.
-Load matches each recorded identity and alternative name against the
-rules of the workflow it is given, by string form. Identities with no
-rule in that workflow are orphaned records (§7), also when a rule with
-that identity is added after the load (§9). Load never creates atoms
-(§10), so a hostile or stale dump cannot grow the atom table.
+Load matches each recorded identity against the rules of the workflow it
+is given, by string form: every recorded key must have its rule there
+(§9). Load never creates atoms (§10), so a hostile or stale dump cannot
+grow the atom table: an alternative name is loaded as the atom when it
+exists, and stays a string otherwise (§7).
 
 ### Graph before state
 
 The graph decides whether a key is valid; the state only records whether
 it was computed. When a key enters the engine, its rule is looked up in
 the graph before any recorded fact: a key with no rule is a graph error
-(§5), even when the state holds records for it. A recorded value never
-makes a key valid.
+(§5).
 
-A rule removed from the code and later registered again under the same
-identity finds its records again.
+The state never holds a record without its rule: `load` rejects a dump
+holding records of a rule that is not in the workflow (§9), and a rule
+cannot be removed from a workflow. Reading an old dump whose rule was
+removed from the code takes a rule registered under the same identity,
+with the `:load` its values need. When the values are only read, a body
+that fails is enough.
 
 ## 4. Rules and alternatives
 
@@ -458,8 +461,7 @@ graph structure.
     number, a function, a nested list, a list holding an alias map, or
     any other term that is not a key, a list of keys or an alias map;
   - `{:invalid_params, given}`, for a key with invalid params (§3);
-  - `{:unknown_rule, key}`, for a key with no registered rule, even when
-    the state holds records for it (§3).
+  - `{:unknown_rule, key}`, for a key with no registered rule.
 
   `{:ok, keys}` reads as a key of rule `:ok`: invalid params for a list
   or an atom, an unknown rule for a map. Whatever its key reason, its
@@ -555,15 +557,17 @@ a body or a dependency function, an `{:error, _}` return, a bad return,
 a raise, a throw or an exit. Only the `kind` of the cleaned error tells
 them apart.
 
-### Orphaned records
+### Records of removed alternatives
 
-A record may reference an identity the graph no longer has: a key whose
-rule was removed between deploys, or an alternative removed from its
-rule. Such records stay in the state as plain data, for inspection.
-They take no part in evaluation (§3, graph before state). Load never
-creates atoms (§3), so after a load, an identity or alternative name with
-no counterpart in the workflow stays a string, also in the names listed
-by `{:all_alternatives_failed, names}`.
+Alternatives change between deploys, so an attempt record may name an
+alternative its rule no longer has. Such records stay in the state as
+plain data, for inspection, and take no part in evaluation. Load never
+creates atoms (§3): an alternative name is loaded as the atom when it
+exists, and stays a string otherwise, also in the names listed by
+`{:all_alternatives_failed, names}`.
+
+A removed rule is another matter: its values cannot be decoded without
+its `:load`, so `load` rejects the dump (§9).
 
 A key with no registered rule demanded at runtime is not a failure
 record: `run` returns a graph error (§5).
@@ -759,9 +763,9 @@ run(workflow, targets, opts)           :: {:ok, workflow} | {:error, error, work
 dump(workflow)                         :: {:ok, data} | {:error, codec_error}
 load(workflow, data)                   :: {:ok, workflow} | {:error, codec_error}
 clear_failure(workflow, key | pred)    :: {:ok, workflow} | {:error, :not_failed | graph_error}
-fetch(workflow, key)                   :: {:ok, value} | {:failed, failure_record} | :error | {:error, graph_error}
-attempts(workflow, key)                :: {:ok, %{alt_name => failure_record}} | {:error, graph_error}
-failures(workflow, key)                :: {:ok, %{key => %{alt_name => failure_record}}} | {:error, :not_failed | graph_error}
+fetch(workflow, key)                   :: {:ok, value} | {:failed, failure_record} | :error
+attempts(workflow, key)                :: {:ok, %{alt_name => failure_record}}
+failures(workflow, key)                :: {:ok, %{key => %{alt_name => failure_record}}} | {:error, :not_failed}
 invoke(call)                           :: result                     # in a call wrapper
 ```
 
@@ -872,17 +876,20 @@ graph built with `add_ns` can still be stored in a module attribute
 
 ### Reading
 
-`fetch` reads the state of one key, written in the forms of §3, outside
-any rule: `:foo` is `{:default, :foo, %{}}`. It returns `{:ok, value}`
-for a key with a value, `{:failed, failure_record}` for a failed key,
-and `:error` for a key with no result, in progress or never demanded. A
-key with no registered rule returns `{:error, graph_error}`, as for
-`run` targets.
+`fetch`, `attempts` and `failures` read the state: they answer from the
+recorded facts, without looking up the rule of the key. A key with no
+registered rule has no records (§3), and reads like a key that was never
+demanded. The key is written in the forms of §3, outside any rule:
+`:foo` is `{:default, :foo, %{}}`. A term that is not a key, or a key
+with invalid params, is an argument of the wrong type: these functions
+raise the graph error with its key reason (Errors, below).
 
-`attempts` reads the attempt records of one key, in the same key forms:
-`{:ok, map}` from alternative name to failure record, empty for a key
-with no attempts, and `{:error, graph_error}` for a key with no
-registered rule.
+`fetch` reads the result of one key. It returns `{:ok, value}` for a key
+with a value, `{:failed, failure_record}` for a failed key, and `:error`
+for a key with no result, in progress or never demanded.
+
+`attempts` reads the attempt records of one key: `{:ok, map}` from
+alternative name to failure record, empty for a key with no attempts.
 
 Together they walk the failure tree (§7) from any failed key: `fetch`
 gives the key's failure, `attempts` its record per alternative, and a
@@ -906,13 +913,11 @@ for {key, alts} <- failures, {alt, {:computation_error, error}} <- alts, do: {ke
 
 The map carries no order. `fetch` gives the order in which the
 alternatives of a key were tried, in `{:all_alternatives_failed, names}`.
-Orphaned records (§7) reachable from the given key are part of its
-failure, and are in the map: attempt records of removed alternatives,
-and keys whose rule was removed.
+Attempt records of removed alternatives (§7) are in the map with the
+others.
 
 `failures` returns `{:error, :not_failed}` for a key that is not failed:
-it has a value, has attempts but no result, or has no records. A key
-with no registered rule returns `{:error, graph_error}`.
+it has a value, has attempts but no result, or has no records.
 
 ### Errors
 
@@ -946,7 +951,10 @@ structs, so `Exception.message/1` formats them for logs:
 
   `run` never raises because of a problem in the graph: graph errors
   are returned. It raises only for arguments of the wrong type, such as
-  a target list that is not a list or an invalid option.
+  a target list that is not a list or an invalid option. `clear_failure`
+  returns its graph errors too. `fetch`, `attempts` and `failures` raise
+  the graph error of a malformed key, and have no other graph error
+  (Reading, above).
 
   A graph error holds:
   - `rule`: the `{ns, name}` of the rule at fault, or `nil` when no rule
@@ -1002,54 +1010,51 @@ structs, so `Exception.message/1` formats them for logs:
   | `{:cycle, key, stack}` | `key` demanded while in progress (§5). `stack` lists the keys being computed, in demand order, from the target down to the demanding key, the `key` of the error |
 - **Codec error** (`Ark.Workflow.CodecError`): a dump or a load failed: a
   value that cannot be encoded, a rule's `:dump` or `:load` that raises,
-  a malformed dump, a value that cannot be decoded. Returned by `dump` or
-  by `load`.
+  a malformed dump, a key or a value that cannot be decoded, records of
+  a rule that is not in the workflow. Returned by `dump` or by `load`.
+  For records without a rule, its reason is
+  `{:unknown_rules, identities}`: every `{ns, name}` at fault, each part
+  as an atom when it exists and as a string otherwise (§3).
 
 ### Dump and load
 
 - `dump` applies each rule's `:dump` to its recorded values, encodes keys
   and values with the generic encoder (§10), drops the runtime-only data
-  (§8) and produces pure JSON-compatible data (§8, dumped form). Keys and
-  values still encoded since the last load are written as-is. Before
-  that, `dump` decodes undecodable keys (see `load`) again: when one now
-  decodes to a key that was computed in the meantime, the computed entry
-  overwrites it, and `dump` emits a warning naming the key.
+  (§8) and produces pure JSON-compatible data (§8, dumped form).
 - `dump` does not change the workflow: it can still be run.
-- `load` takes a workflow, usually holding the rules already (built from
-  code or stored in a module attribute), plus the dumped data. It:
+- `load` takes a workflow holding the rules already (built from code or
+  stored in a module attribute), plus the dumped data. It:
   1. validates that the dump is well-formed (§8);
-  2. decodes every key with the generic decoder, and matches identities
-     and alternative names against the rules of the workflow (§3);
-  3. decodes the recorded values of rules in the workflow: generic
-     decoder, then the rule's `:load`. A value that cannot be decoded
-     makes `load` return a codec error: bad data fails early, and
-     decoding is cheap since `:load` does not read external state (§10).
+  2. decodes every key with the generic decoder, and matches its
+     identity against the rules of the workflow (§3);
+  3. decodes the recorded values: generic decoder, then the rule's
+     `:load`.
 
-  Records of rules or alternatives not in the workflow (removed from the
-  code) are kept as orphaned records (§7), and `load` emits one warning
-  listing the rules they belong to. Values of such rules are never
-  decoded: nothing can demand them.
+  `load` takes a dump as a whole. Each of the following makes it return
+  a codec error:
+  - records of a rule that is not in the workflow: a value, a failure or
+    attempt records. The error lists every such rule at once. Such a
+    dump is loaded into a workflow with a rule registered under each of
+    those identities (§3);
+  - a key or a value that cannot be decoded, such as params referencing
+    an atom that does not exist;
+  - a rule's `:load` that raises. Bad data fails early, and decoding is
+    cheap since `:load` does not read external state (§10).
+
+  Attempt records of an alternative that its rule no longer has are
+  loaded as they are (§7).
 
   Rules are registered before the load. A rule added to the workflow
-  after the load does not see the records of its identity: they stay
-  orphaned, its keys are computed again, and `dump` writes the computed
-  entry over the orphaned one, with a warning naming the key, as for
-  undecodable keys below.
-
-  A key whose params cannot be decoded (they reference an atom that does
-  not exist) is an **undecodable key**: its entry stays encoded, is
-  written back as-is by `dump`, and is never matched. `load` emits a
-  warning naming its rule. When code later demands that key, it is computed
-  again, and `dump` overwrites the encoded entry with the computed one.
+  after the load has no records: its keys are computed as in a new
+  workflow.
 - Storing a workflow-definition version alongside the dump is
   recommended: a rule whose meaning changed under the same identity
   keeps its recorded values (§3).
-- A decode failure of a value whose rule is in the workflow (e.g. a
-  rule's `:load` that does not accept data dumped by an older version of
-  the rule) is a codec error, never a key failure: a value that was `ok`
-  at dump must not become `failed`. Since `:load` does not read external
-  state (§10), such a failure means the code is incompatible with the
-  dump.
+- A decode failure of a value (e.g. a rule's `:load` that does not
+  accept data dumped by an older version of the rule) is a codec error,
+  never a key failure: a value that was `ok` at dump must not become
+  `failed`. Since `:load` does not read external state (§10), such a
+  failure means the code is incompatible with the dump.
 
 ### Clearing failures
 
@@ -1057,9 +1062,9 @@ structs, so `Exception.message/1` formats them for logs:
 added an alternative to their rule. Typical use is a script that loads
 every failed workflow, clears the relevant keys and runs again. It takes
 a key (forms of §3, outside any rule) or a predicate. The predicate
-receives each failed key whose rule is in the workflow, in its full
-`{ns, name, params}` form (§3), so `&match?({_, :b, _}, &1)` selects
-every failed key of rule `:b` of any namespace.
+receives each failed key, in its full `{ns, name, params}` form (§3), so
+`&match?({_, :b, _}, &1)` selects every failed key of rule `:b` of any
+namespace.
 
 For each selected key, it:
 
@@ -1156,7 +1161,7 @@ Properties:
 - JSON-native data is readable and queryable in storage. ETF data is
   opaque.
 - `:safe` decoding creates no atoms: a term referencing an atom that
-  does not exist fails to decode.
+  does not exist fails to decode, and `load` returns a codec error (§9).
 - ETF bytes are deterministic within one OTP major release. The engine
   compares decoded terms, never bytes (§8).
 - Pids, ports, references and functions are rejected with an error
@@ -1428,8 +1433,6 @@ helpers in `test/support` are left to the implementor.
   - ...for a target with a string `ns` or `name`: `{:invalid_key, given}`
   - ...for a target with params containing a pid, port, reference or
     function: `{:invalid_params, given}`
-  - ...for a target with no registered rule even when the loaded state
-    holds records for that key
   - ...for a malformed target: `{:invalid_key, given}` for `nil`, `true`,
     an integer or a four-element tuple, `{:invalid_params, given}` for
     params that are not a map or `{ns, name}` without params
@@ -1524,8 +1527,7 @@ helpers in `test/support` are left to the implementor.
   `{:all_alternatives_failed, alt_names}`, listing every attempted
   alternative
 - After a deploy removed an alternative, a key that failed before the
-  dump still lists that alternative in `{:all_alternatives_failed, _}`,
-  by its name as a string
+  dump still lists that alternative in `{:all_alternatives_failed, _}`
 - A consumer of a failed key fails with `{:dep_failed, key}`, transitively
   up to the target
 - `{:dep_failed, dep_key}` records the real key, never the alias it was
@@ -1593,8 +1595,7 @@ helpers in `test/support` are left to the implementor.
   - a string, a number, a function, a nested list, a list holding an alias
     map: `{:invalid_key, given}`
   - `{:ok, keys}`, with a message hinting that keys are returned directly
-  - a key with no registered rule, even when the state holds records for
-    that key: `{:unknown_rule, key}`
+  - a key with no registered rule: `{:unknown_rule, key}`
   - a key with a string `ns` or `name`: `{:invalid_key, given}`
   - a key with invalid params: `{:invalid_params, given}`
 - A key returned by a dependency function and exposed under the same
@@ -1677,15 +1678,14 @@ helpers in `test/support` are left to the implementor.
   - ...removes the untried alternatives of a key, the key is failed on
     resume without calling user code
   - ...renames an alternative, the renamed one is tried again, and the
-    records under the old name are orphaned
+    records under the old name are kept
 - Attempt records of a removed alternative...
   - ...take no part in evaluation
   - ...are honored again when the alternative is added back, also after a
     dump and a load: it is not tried again
 - Failure records are not passed through a rule's `:dump` and `:load`
-- The failures of a key hold the orphaned records reachable from it:
-  attempt records of a removed alternative, and a key whose rule was
-  removed
+- The failures of a key hold the attempt records of a removed
+  alternative
 
 ### Run API and lifecycle (§9)
 
@@ -1696,11 +1696,15 @@ helpers in `test/support` are left to the implementor.
   - ...`{:failed, failure_record}` for a failed key
   - ...`:error` for a key with attempts but no result
   - ...`:error` for a key never demanded
-  - ...`{:error, graph_error}` for a key with no registered rule, even
-    when the state holds records for it
-  - ...`{:error, graph_error}` for an invalid key: `{:invalid_key, given}`
-    for a string identity, `{:invalid_params, given}` for params that are
-    not a map
+  - ...`:error` for a key with no registered rule
+- `fetch` raises a graph error for an invalid key: `{:invalid_key, given}`
+  for a string identity, `{:invalid_params, given}` for params that are
+  not a map
+- `attempts` returns...
+  - ...the failure record of each attempted alternative
+  - ...an empty map for a key with no attempts
+  - ...an empty map for a key with no registered rule
+- `attempts` raises a graph error for an invalid key
 - `fetch` accepts the key forms of `run` targets: `:foo` reads
   `{:default, :foo, %{}}`
 - `run` returns `{:error, error, workflow}` for the first failed target,
@@ -1736,7 +1740,8 @@ helpers in `test/support` are left to the implementor.
   - ...for a key with a value
   - ...for a key with attempts but no result
   - ...for a key with no records
-- `failures` for a key with no registered rule returns a graph error
+  - ...for a key with no registered rule
+- `failures` raises a graph error for an invalid key
 - From a failed key, `fetch` and `attempts` walk the `{:dep_failed, key}`
   records down to the leaf: when `:a` needs `:b`, `:b` needs `:c` and the
   body of `:c` returns `{:error, %SomeError{}}`, the walk from `:a` finds
@@ -1773,18 +1778,12 @@ helpers in `test/support` are left to the implementor.
 - `%{"id" => 1}` and `%{"id" => 1.0}` are still two keys after a round
   trip through JSON
 - Dumping a loaded state that was not run produces the same data as the
-  original dump, including orphaned records
-- Dumping a loaded state that was not run produces the same data as the
-  original dump, including undecodable keys *(fixed dump)*
+  original dump, including attempt records of removed alternatives
 - A failure record queried after a round trip equals the one before,
   including its time, kind, message and stacktrace, apart from the `reason` of its
   cleaned error, `nil` after the load
 - A cleaned error whose `reason` holds a pid or a function does not make
   `dump` fail
-- A `{:dep_failed, key}` record pointing to an orphaned key survives a
-  load and a dump
-- A `{:dep_failed, key}` record pointing to an undecodable key survives a
-  load and a dump *(fixed dump)*
 - A value containing a pid, port, reference or function...
   - ...makes `dump` return a codec error naming the key
   - ...makes `dump` return a codec error wherever it sits: under a
@@ -1804,32 +1803,24 @@ helpers in `test/support` are left to the implementor.
     terms: also when one entry is stored as JSON and the other as ETF
 - A value whose rule's `:load` fails makes `load` return a codec error,
   never turning the key into a failure
-- A value of a rule in the workflow whose ETF references an atom that
-  does not exist makes `load` return a codec error *(fixed dump)*
-- Records of a rule removed from the code...
-  - ...are loaded and kept as orphaned records
-  - ...make `load` emit one warning listing the rules they belong to
-  - ...are written back by `dump`
-  - ...are never decoded: the removed rule's code is not involved
-    *(fixed dump)*
-  - ...take no part in evaluation: demanding that key is a graph error
-  - ...are found again when the rule is registered again under the same
-    identity, before the load
-  - ...stay orphaned when the rule is added to the workflow after the
-    load: its keys are computed again, and `dump` writes the computed
-    entries over the orphaned ones, with a warning naming the keys
-- `load` emits no warning when every record has a rule
+- A value whose ETF references an atom that does not exist makes `load`
+  return a codec error *(fixed dump)*
+- Records of a rule that is not in the workflow...
+  - ...make `load` return a codec error with reason
+    `{:unknown_rules, identities}`, listing every such rule, for a key
+    with a value and for a failed key
+  - ...make `load` return the same codec error for a key with attempts
+    but no result
+  - ...are loaded into a workflow with a rule registered under the same
+    identity, also a rule with other alternatives and a body that
+    raises: the recorded results are read, and a run calls no user code
+    for them
 - Load never creates atoms... *(fixed dump)*
-  - ...for an `ns`, `name` or alternative name with no registered rule
-  - ...for params referencing an atom that does not exist
-- A key whose params reference an atom that does not exist...
-  *(fixed dump)*
-  - ...makes `load` emit a warning naming its rule
-  - ...is written back as-is by `dump`
-  - ...is never matched by a demanded key
-  - ...once code demands the same key, it is computed again, and `dump`
-    overwrites the encoded entry with the computed one and emits a warning
-    naming the key
+  - ...for an `ns` or `name` with no registered rule: a codec error
+    listing the identity with strings
+  - ...for an alternative name that does not exist as an atom: it stays
+    a string
+  - ...for params referencing an atom that does not exist: a codec error
 
 ### Dump check (§10)
 
@@ -1853,7 +1844,6 @@ helpers in `test/support` are left to the implementor.
   - ...retries a cleared alternative placed between alternatives that keep
     their failure
   - ...keeps every recorded value
-  - ...propagates through orphaned records
   - ...accepts the key forms that `run` accepts for targets
 - When `:a` needs `:b`, `:b` needs `:c` and `:c` failed, clearing `:c`
   clears `:b` and `:a`
@@ -1865,7 +1855,6 @@ helpers in `test/support` are left to the implementor.
   - ...clears every failed key it selects, with the same propagation
   - ...receives keys in the full `{ns, name, params}` form, `:default`
     included
-  - ...is not given orphaned keys
 - `clear_failure` returns `{:error, :not_failed}`...
   - ...for a key with a value
   - ...for a key with attempts but no result

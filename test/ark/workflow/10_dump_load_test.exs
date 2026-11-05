@@ -220,32 +220,28 @@ defmodule Ark.Workflow.DumpLoadTest do
     assert 1 == fetch!(wf, {:a, params})
   end
 
-  test "dumping a loaded state that was not run produces the same data as the original dump, including orphaned records" do
-    graph =
+  test "dumping a loaded state that was not run produces the same data as the original dump, including attempt records of removed alternatives" do
+    graph = fn c_alts ->
       Workflow.new()
       |> Workflow.add_rule(:a, rule([:b], ok_body(1)))
       |> Workflow.add_rule(:b, failing_rule())
-      |> Workflow.add_rule(:c, %{
-        alts: [
-          c1: %{deps: [], body: error_body()},
-          c2: %{deps: [], body: params_body()}
-        ]
-      })
-      |> Workflow.add_rule({NsA, :removed}, const_rule(%{"json" => true}))
+      |> Workflow.add_rule(:c, %{alts: c_alts})
+      |> Workflow.add_rule({NsA, :d}, const_rule(%{"json" => true}))
+    end
+
+    c1 = {:c1, %{deps: [], body: error_body()}}
+    c2 = {:c2, %{deps: [], body: params_body()}}
 
     {:error, %ComputationError{}, wf} =
-      Workflow.run(graph, [{NsA, :removed, %{}}, {:c, %{id: 1}}, :a])
+      Workflow.run(graph.([c1, c2]), [{NsA, :d, %{}}, {:c, %{id: 1}}, :a])
 
     data = json(dump!(wf))
 
-    assert data == json(dump!(Workflow.load(graph, data) |> elem(1)))
+    assert {:ok, loaded} = Workflow.load(graph.([c1, c2]), data)
+    assert data == json(dump!(loaded))
 
-    reduced = Workflow.add_rule(Workflow.new(), :c, const_rule(:other))
-
-    capture_log(fn ->
-      assert {:ok, loaded} = Workflow.load(reduced, data)
-      assert data == json(dump!(loaded))
-    end)
+    assert {:ok, loaded} = Workflow.load(graph.([c2]), data)
+    assert data == json(dump!(loaded))
   end
 
   test "a failure record queried after a round trip equals the one before, including its time, kind and message, apart from the reason of its cleaned error" do
@@ -361,30 +357,6 @@ defmodule Ark.Workflow.DumpLoadTest do
               pid: {:computation_error, %{kind: :user_term, reason: nil}},
               fun: {:computation_error, %{kind: :throw, reason: nil}}
             }} = Workflow.attempts(loaded, :a)
-  end
-
-  test "a {:dep_failed, key} record pointing to an orphaned key survives a load and a dump" do
-    graph =
-      Workflow.new()
-      |> Workflow.add_rule(:a, rule([{:b, %{id: 1}}], ok_body(1)))
-      |> Workflow.add_rule(:b, failing_rule())
-
-    {:error, %ComputationError{}, wf} = Workflow.run(graph, [:a])
-    data = json(dump!(wf))
-
-    reduced = Workflow.add_rule(Workflow.new(), :a, rule([], ok_body(1)))
-
-    capture_log(fn ->
-      assert {:ok, loaded} = Workflow.load(reduced, data)
-
-      assert {:ok, %{default: {:dep_failed, key(:b, %{id: 1})}}} ==
-               Workflow.attempts(loaded, :a)
-
-      assert data == json(dump!(loaded))
-
-      assert {:ok, reloaded} = Workflow.load(graph, data)
-      assert {:failed, _} = Workflow.fetch(reloaded, {:b, %{id: 1}})
-    end)
   end
 
   describe "a value containing a pid, port, reference or function" do
@@ -575,124 +547,70 @@ defmodule Ark.Workflow.DumpLoadTest do
              Workflow.load(graph.(fn _ -> raise "incompatible" end), data)
   end
 
-  describe "records of a rule removed from the code" do
+  describe "records of a rule that is not in the workflow" do
     setup do
       {pid, body} = mock_fun(1, ok_body(:computed_before))
 
-      full = fn ->
+      full =
         Workflow.new()
         |> Workflow.add_rule(:kept, const_rule(:kept))
         |> Workflow.add_rule(:removed_rule, rule([], body))
         |> Workflow.add_rule({NsA, :other_removed}, failing_rule())
-      end
 
       {:error, %ComputationError{}, wf} =
-        Workflow.run(full.(), [:kept, :removed_rule, {NsA, :other_removed, %{id: 1}}])
+        Workflow.run(full, [:kept, :removed_rule, {NsA, :other_removed, %{id: 1}}])
 
-      data = json(dump!(wf))
       reduced = Workflow.add_rule(Workflow.new(), :kept, const_rule(:kept))
 
-      %{data: data, full: full, reduced: reduced, pid: pid}
+      %{data: json(dump!(wf)), reduced: reduced, pid: pid}
     end
 
-    test "are loaded and kept as orphaned records, written back by dump", %{
-      data: data,
-      reduced: reduced
-    } do
-      capture_log(fn ->
-        assert {:ok, loaded} = Workflow.load(reduced, data)
-        assert {:ok, :kept} == Workflow.fetch(loaded, :kept)
-        assert data == json(dump!(loaded))
-      end)
+    test "make load return a codec error listing every such rule, for a key with a value and for a failed key",
+         %{data: data, reduced: reduced} do
+      assert {:error, %CodecError{reason: {:unknown_rules, rules}}} =
+               Workflow.load(reduced, data)
+
+      assert Enum.sort([{:default, :removed_rule}, {NsA, :other_removed}]) ==
+               Enum.sort(rules)
     end
 
-    test "make load emit one warning listing the rules they belong to", %{
-      data: data,
-      reduced: reduced
-    } do
-      log = capture_log(fn -> assert {:ok, _} = Workflow.load(reduced, data) end)
+    test "make load return the same codec error for a key with attempts but no result",
+         %{reduced: reduced} do
+      full =
+        Workflow.add_rule(reduced, :in_progress, %{
+          alts: [
+            p1: %{deps: [], body: error_body()},
+            p2: %{deps: [fn _, _, _ -> "invalid" end], body: ok_body(1)}
+          ]
+        })
 
-      assert 1 == warnings(log)
-      assert log =~ "removed_rule"
-      assert log =~ "other_removed"
+      {:error, %GraphError{}, wf} = Workflow.run(full, [:in_progress])
+      assert :error == Workflow.fetch(wf, :in_progress)
+
+      assert {:error, %CodecError{reason: {:unknown_rules, [{:default, :in_progress}]}}} =
+               Workflow.load(reduced, json(dump!(wf)))
     end
 
-    test "make load emit no warning when every record has a rule", %{
-      data: data,
-      full: full
-    } do
-      log = capture_log(fn -> assert {:ok, _} = Workflow.load(full.(), data) end)
-      assert 0 == warnings(log)
-    end
+    test "are loaded into a workflow with a rule registered under the same identity, also a rule with other alternatives and a body that raises",
+         %{data: data, reduced: reduced, pid: pid} do
+      stub = %{alts: [stub: %{deps: [], body: fn _, _, _ -> raise "not called" end}]}
+      failed = {NsA, :other_removed, %{id: 1}}
 
-    test "take no part in evaluation: demanding that key is a graph error", %{
-      data: data,
-      reduced: reduced
-    } do
-      capture_log(fn ->
-        {:ok, loaded} = Workflow.load(reduced, data)
+      stubbed =
+        reduced
+        |> Workflow.add_rule(:removed_rule, stub)
+        |> Workflow.add_rule({NsA, :other_removed}, stub)
 
-        removed = {:default, :removed_rule, %{}}
+      assert {:ok, loaded} = Workflow.load(stubbed, data)
+      assert {:ok, :computed_before} == Workflow.fetch(loaded, :removed_rule)
+      assert {:failed, _} = Workflow.fetch(loaded, failed)
 
-        assert {:error, %GraphError{reason: {:unknown_rule, ^removed}}, _} =
-                 Workflow.run(loaded, [:removed_rule])
+      loaded = run!(loaded, [:removed_rule])
+      assert {:error, %ComputationError{}, loaded} = Workflow.run(loaded, [failed])
 
-        assert {:error, %GraphError{reason: {:unknown_rule, ^removed}}} =
-                 Workflow.fetch(loaded, :removed_rule)
-
-        other = {NsA, :other_removed, %{id: 1}}
-
-        assert {:error, %GraphError{reason: {:unknown_rule, ^other}}} =
-                 Workflow.attempts(loaded, other)
-
-        loaded =
-          Workflow.add_rule(
-            loaded,
-            :consumer,
-            rule([fn _, _, _ -> :removed_rule end], ok_body(1))
-          )
-
-        assert {:error,
-                %GraphError{reason: {:bad_return, :deps, _, :removed_rule, reason}}, _} =
-                 Workflow.run(loaded, [:consumer])
-
-        assert {:unknown_rule, ^removed} = reason
-      end)
-    end
-
-    test "are found again when the rule is registered again under the same identity, before the load",
-         %{data: data, full: full, pid: pid} do
-      log =
-        capture_log(fn ->
-          assert {:ok, loaded} = Workflow.load(full.(), data)
-          loaded = run!(loaded, [:removed_rule])
-          assert :computed_before == fetch!(loaded, :removed_rule)
-          assert {:failed, _} = Workflow.fetch(loaded, {NsA, :other_removed, %{id: 1}})
-        end)
-
+      assert {:ok, attempts} = Workflow.attempts(loaded, failed)
+      assert [:default] == Map.keys(attempts)
       verify(pid)
-      assert 0 == warnings(log)
-    end
-
-    test "stay orphaned when the rule is added to the workflow after the load: its keys are computed again, and dump writes the computed entries over the orphaned ones, with a warning naming the keys",
-         %{data: data, reduced: reduced, full: full} do
-      capture_log(fn ->
-        {:ok, loaded} = Workflow.load(reduced, data)
-        loaded = Workflow.add_rule(loaded, :removed_rule, const_rule(:computed_after))
-
-        loaded = run!(loaded, [:removed_rule])
-        assert :computed_after == fetch!(loaded, :removed_rule)
-
-        log = capture_log(fn -> send(self(), {:data, dump!(loaded)}) end)
-        assert_received {:data, new_data}
-
-        assert log =~ ":removed_rule"
-        refute log =~ "other_removed"
-
-        {:ok, reloaded} = Workflow.load(full.(), json(new_data))
-        assert :computed_after == fetch!(reloaded, :removed_rule)
-        assert {:failed, _} = Workflow.fetch(reloaded, {NsA, :other_removed, %{id: 1}})
-      end)
     end
   end
 
@@ -770,26 +688,6 @@ defmodule Ark.Workflow.DumpLoadTest do
     verify(a_pid)
     verify(f_pid)
     assert %{a: :va, b: :vb} == fetch!(wf, :r)
-  end
-
-  test "a dependency function returning a key with no registered rule is a graph error even when the state holds records for that key" do
-    full =
-      Workflow.new()
-      |> Workflow.add_rule(:gone, const_rule(1))
-      |> Workflow.add_rule(:r, rule([fn _, _, _ -> :gone end], deps_body()))
-
-    wf = run!(full, [:gone])
-
-    reduced =
-      Workflow.add_rule(Workflow.new(), :r, rule([fn _, _, _ -> :gone end], deps_body()))
-
-    capture_log(fn ->
-      wf = roundtrip(wf, reduced)
-      assert {:error, %GraphError{reason: reason}, _} = Workflow.run(wf, [:r])
-
-      assert {:bad_return, :deps, _, :gone, {:unknown_rule, {:default, :gone, %{}}}} =
-               reason
-    end)
   end
 
   test "context is not persisted: after a load, user code sees only the context given to the run" do

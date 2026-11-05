@@ -324,17 +324,23 @@ defmodule Ark.Workflow.ComputationErrorTest do
     end
   end
 
-  test "failures for a key with no registered rule returns a graph error" do
+  test "failures returns {:error, :not_failed} for a key with no registered rule" do
     wf = Workflow.add_rule(Workflow.new(), :a, failing_rule())
 
-    assert {:error,
-            %GraphError{rule: nil, reason: {:unknown_rule, {:default, :missing, %{}}}}} =
-             Workflow.failures(wf, :missing)
+    assert {:error, :not_failed} == Workflow.failures(wf, :missing)
+    assert {:error, :not_failed} == Workflow.failures(wf, {NsA, :a, %{}})
+  end
 
-    assert {:error, %GraphError{reason: {:unknown_rule, {NsA, :a, %{}}}}} =
-             Workflow.failures(wf, {NsA, :a, %{}})
+  test "failures raises a graph error for an invalid key" do
+    wf = Workflow.add_rule(Workflow.new(), :a, failing_rule())
 
-    assert {:error, %GraphError{reason: {:invalid_key, "a"}}} = Workflow.failures(wf, "a")
+    for {given, reason} <- [
+          {"a", {:invalid_key, "a"}},
+          {{:a, [id: 1]}, {:invalid_params, {:a, [id: 1]}}}
+        ] do
+      e = assert_raise GraphError, fn -> Workflow.failures(wf, given) end
+      assert %GraphError{rule: nil, reason: ^reason} = e
+    end
   end
 
   test "a tuple or a capture naming a function that does not exist fails the alternative with kind :error when it is called" do

@@ -3,7 +3,6 @@ defmodule Ark.Workflow.FailurePersistenceTest do
 
   import Ark.Test.Mock
   import Ark.Test.WorkflowHelpers
-  import ExUnit.CaptureLog
 
   alias Ark.Workflow
   alias Ark.Workflow.ComputationError
@@ -170,11 +169,9 @@ defmodule Ark.Workflow.FailurePersistenceTest do
             [alt(log, :a2, {:ok, :a2}), alt(log, :a1, {:error, :x})],
             [alt(log, :other, {:ok, :other})]
           ] do
-        capture_log(fn ->
-          loaded = roundtrip(wf, graph_with(:a, alts_rule(alts)))
-          loaded = run!(loaded, [:a])
-          assert :a2 == fetch!(loaded, :a)
-        end)
+        loaded = roundtrip(wf, graph_with(:a, alts_rule(alts)))
+        loaded = run!(loaded, [:a])
+        assert :a2 == fetch!(loaded, :a)
       end
 
       assert [:a1, :a2] == logged(log)
@@ -197,11 +194,9 @@ defmodule Ark.Workflow.FailurePersistenceTest do
 
     wf = run!(v1, [:a])
 
-    capture_log(fn ->
-      wf = roundtrip(wf, v2)
-      wf = run!(wf, [:consumer])
-      assert %{a: :from_removed} == fetch!(wf, :consumer)
-    end)
+    wf = roundtrip(wf, v2)
+    wf = run!(wf, [:consumer])
+    assert %{a: :from_removed} == fetch!(wf, :consumer)
   end
 
   test "a run stopped between the failure of A1 and the attempt of A2 resumes at A2, without calling A1 again" do
@@ -305,16 +300,14 @@ defmodule Ark.Workflow.FailurePersistenceTest do
 
       v2 = graph_with(:a, alts_rule([alt(log, :a1, {:ok, :a1})]))
 
-      capture_log(fn ->
-        wf = roundtrip(wf, v2)
-        assert {:error, %ComputationError{}, wf} = Workflow.run(wf, [:a])
-        assert {:failed, {:all_alternatives_failed, [:a1]}} == Workflow.fetch(wf, :a)
-      end)
+      wf = roundtrip(wf, v2)
+      assert {:error, %ComputationError{}, wf} = Workflow.run(wf, [:a])
+      assert {:failed, {:all_alternatives_failed, [:a1]}} == Workflow.fetch(wf, :a)
 
       assert [:a1] == logged(log)
     end
 
-    test "renames an alternative, the renamed one is tried again, and the records under the old name are orphaned" do
+    test "renames an alternative, the renamed one is tried again, and the records under the old name are kept" do
       log = start_log()
 
       v1 =
@@ -332,19 +325,17 @@ defmodule Ark.Workflow.FailurePersistenceTest do
         )
         |> Workflow.add_rule(:broken, const_rule(:fixed))
 
-      capture_log(fn ->
-        wf = roundtrip(wf, v2)
-        wf = run!(wf, [:a])
-        assert :a2 == fetch!(wf, :a)
-        assert {:ok, attempts} = Workflow.attempts(wf, :a)
-        assert %{renamed: {:computation_error, _}} = attempts
-        assert {:computation_error, _} = attempts["a1"]
-      end)
+      wf = roundtrip(wf, v2)
+      wf = run!(wf, [:a])
+      assert :a2 == fetch!(wf, :a)
+      assert {:ok, attempts} = Workflow.attempts(wf, :a)
+      assert %{renamed: {:computation_error, _}} = attempts
+      assert {:computation_error, _} = attempts[:a1]
 
       assert [:a1, :renamed, :a2] == logged(log)
     end
 
-    test "removed an alternative, a key that failed before the dump still lists that alternative in {:all_alternatives_failed, _}, by its name as a string" do
+    test "removed an alternative, a key that failed before the dump still lists that alternative in {:all_alternatives_failed, _}" do
       graph = fn alts -> graph_with(:a, alts_rule(alts)) end
       log = start_log()
 
@@ -353,12 +344,10 @@ defmodule Ark.Workflow.FailurePersistenceTest do
 
       {:error, %ComputationError{}, wf} = Workflow.run(v1, [:a])
 
-      capture_log(fn ->
-        wf = roundtrip(wf, graph.([alt(log, :kept, {:error, :x})]))
+      wf = roundtrip(wf, graph.([alt(log, :kept, {:error, :x})]))
 
-        assert {:failed, {:all_alternatives_failed, [:kept, "removed_alt_name"]}} ==
-                 Workflow.fetch(wf, :a)
-      end)
+      assert {:failed, {:all_alternatives_failed, [:kept, :removed_alt_name]}} ==
+               Workflow.fetch(wf, :a)
     end
   end
 
@@ -393,11 +382,9 @@ defmodule Ark.Workflow.FailurePersistenceTest do
         )
         |> Workflow.add_rule(:broken, const_rule(:fixed))
 
-      capture_log(fn ->
-        wf = roundtrip(wf, v2)
-        wf = run!(wf, [:a])
-        assert :a3 == fetch!(wf, :a)
-      end)
+      wf = roundtrip(wf, v2)
+      wf = run!(wf, [:a])
+      assert :a3 == fetch!(wf, :a)
 
       assert [:removed, :a2, :a3] == logged(log)
     end
@@ -420,56 +407,49 @@ defmodule Ark.Workflow.FailurePersistenceTest do
         )
         |> Workflow.add_rule(:broken, const_rule(:fixed))
 
-      capture_log(fn ->
-        wf = roundtrip(wf, without)
-        {:error, %GraphError{}, wf} = Workflow.run(wf, [:a])
-        wf = roundtrip(wf, with_it)
-        wf = run!(wf, [:a])
-        assert :a3 == fetch!(wf, :a)
-      end)
+      wf = roundtrip(wf, without)
+      {:error, %GraphError{}, wf} = Workflow.run(wf, [:a])
+      wf = roundtrip(wf, with_it)
+      wf = run!(wf, [:a])
+      assert :a3 == fetch!(wf, :a)
 
       assert [:removed, :a3] == logged(log)
     end
   end
 
-  test "the failures of a key hold the orphaned records reachable from it: attempt records of a removed alternative, and a key whose rule was removed" do
+  test "the failures of a key hold the attempt records of a removed alternative" do
+    c_dep = {:kept, %{deps: [:c], body: ok_body(:a)}}
+
     v1 =
       Workflow.new()
       |> Workflow.add_rule(
         :a,
-        alts_rule([
-          {:gone, %{deps: [], body: error_body(:gone_reason)}},
-          {:kept, %{deps: [:orphan], body: ok_body(:a)}}
-        ])
+        alts_rule([{:gone, %{deps: [], body: error_body(:gone_reason)}}, c_dep])
       )
-      |> Workflow.add_rule(:orphan, rule([:c], ok_body(:orphan)))
       |> Workflow.add_rule(:c, failing_rule(:c_reason))
 
     v2 =
       Workflow.new()
-      |> Workflow.add_rule(:a, alts_rule([{:kept, %{deps: [], body: ok_body(:a)}}]))
+      |> Workflow.add_rule(:a, alts_rule([c_dep]))
       |> Workflow.add_rule(:c, failing_rule(:c_reason))
 
     {:error, %ComputationError{}, wf} = Workflow.run(v1, [:a])
 
-    capture_log(fn ->
-      wf = roundtrip(wf, v2)
-      a = {:default, :a, %{}}
-      c = {:default, :c, %{}}
+    wf = roundtrip(wf, v2)
+    a = {:default, :a, %{}}
+    c = {:default, :c, %{}}
 
-      assert {:ok, failures} = Workflow.failures(wf, :a)
-      assert 3 == map_size(failures)
+    assert {:ok, failures} = Workflow.failures(wf, :a)
 
-      assert %{
-               ^a => %{
-                 "gone" => {:computation_error, %{message: ":gone_reason"}},
-                 kept: {:dep_failed, orphan}
-               },
-               ^c => %{default: {:computation_error, %{message: ":c_reason"}}}
-             } = failures
+    assert %{
+             ^a => %{
+               gone: {:computation_error, %{message: ":gone_reason"}},
+               kept: {:dep_failed, ^c}
+             },
+             ^c => %{default: {:computation_error, %{message: ":c_reason"}}}
+           } = failures
 
-      assert 2 == map_size(failures[a])
-      assert [{:dep_failed, ^c}] = Map.values(failures[orphan])
-    end)
+    assert 2 == map_size(failures)
+    assert 2 == map_size(failures[a])
   end
 end

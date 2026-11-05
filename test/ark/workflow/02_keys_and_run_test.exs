@@ -363,21 +363,19 @@ defmodule Ark.Workflow.KeysAndRunTest do
       assert :error == Workflow.fetch(wf, {:ok, %{id: 1}})
     end
 
-    test "returns {:error, graph_error} for a key with no registered rule", %{wf: wf} do
-      assert {:error,
-              %GraphError{rule: nil, reason: {:unknown_rule, {:default, :missing, %{}}}}} =
-               Workflow.fetch(wf, :missing)
-
-      assert {:error, %GraphError{reason: {:unknown_rule, {NsA, :ok, %{}}}}} =
-               Workflow.fetch(wf, {NsA, :ok, %{}})
+    test "returns :error for a key with no registered rule", %{wf: wf} do
+      assert :error == Workflow.fetch(wf, :missing)
+      assert :error == Workflow.fetch(wf, {NsA, :ok, %{}})
     end
 
-    test "returns {:error, graph_error} for an invalid key", %{wf: wf} do
-      assert {:error, %GraphError{reason: {:invalid_key, "ok"}}} =
-               Workflow.fetch(wf, "ok")
-
-      assert {:error, %GraphError{reason: {:invalid_params, {:ok, [id: 1]}}}} =
-               Workflow.fetch(wf, {:ok, [id: 1]})
+    test "raises a graph error for an invalid key", %{wf: wf} do
+      for {given, reason} <- [
+            {"ok", {:invalid_key, "ok"}},
+            {{:ok, [id: 1]}, {:invalid_params, {:ok, [id: 1]}}}
+          ] do
+        e = assert_raise GraphError, fn -> Workflow.fetch(wf, given) end
+        assert %GraphError{rule: nil, reason: ^reason} = e
+      end
     end
 
     test "accepts the key forms of run targets", %{wf: wf} do
@@ -416,9 +414,18 @@ defmodule Ark.Workflow.KeysAndRunTest do
       assert {:ok, %{}} == Workflow.attempts(wf, :a)
     end
 
-    test "returns a graph error for a key with no registered rule" do
-      assert {:error, %GraphError{reason: {:unknown_rule, {:default, :a, %{}}}}} =
-               Workflow.attempts(Workflow.new(), :a)
+    test "returns an empty map for a key with no registered rule" do
+      assert {:ok, %{}} == Workflow.attempts(Workflow.new(), :a)
+    end
+
+    test "raises a graph error for an invalid key" do
+      for {given, reason} <- [
+            {"a", {:invalid_key, "a"}},
+            {{:a, [id: 1]}, {:invalid_params, {:a, [id: 1]}}}
+          ] do
+        e = assert_raise GraphError, fn -> Workflow.attempts(Workflow.new(), given) end
+        assert %GraphError{rule: nil, reason: ^reason} = e
+      end
     end
   end
 end

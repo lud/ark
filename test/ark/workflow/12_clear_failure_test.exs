@@ -3,7 +3,6 @@ defmodule Ark.Workflow.ClearFailureTest do
 
   import Ark.Test.Mock
   import Ark.Test.WorkflowHelpers
-  import ExUnit.CaptureLog
 
   alias Ark.Workflow
   alias Ark.Workflow.ComputationError
@@ -198,36 +197,6 @@ defmodule Ark.Workflow.ClearFailureTest do
       assert {:ok, :value} == Workflow.fetch(wf, :ok)
     end
 
-    test "propagates through orphaned records" do
-      log = start_log()
-
-      v1 =
-        Workflow.new()
-        |> Workflow.add_rule(:a, rule([:orphan], ok_body(:a)))
-        |> Workflow.add_rule(:orphan, rule([:c], ok_body(:orphan)))
-        |> Workflow.add_rule(:c, failing_rule())
-
-      v2 =
-        Workflow.new()
-        |> Workflow.add_rule(:a, rule([], tracked(log, :a, {:ok, :a})))
-        |> Workflow.add_rule(:c, const_rule(:c))
-
-      {:error, %ComputationError{}, wf} = Workflow.run(v1, [:a])
-
-      capture_log(fn ->
-        wf = roundtrip(wf, v2)
-        assert {:failed, _} = Workflow.fetch(wf, :a)
-
-        assert {:ok, wf} = Workflow.clear_failure(wf, :c)
-        assert :error == Workflow.fetch(wf, :a)
-
-        wf = run!(wf, [:a])
-        assert :a == fetch!(wf, :a)
-      end)
-
-      assert [:a] == logged(log)
-    end
-
     test "accepts the key forms that run accepts for targets" do
       for key <- [:c, {:c, %{}}, {:default, :c, %{}}] do
         wf = Workflow.add_rule(Workflow.new(), :c, failing_rule())
@@ -340,18 +309,6 @@ defmodule Ark.Workflow.ClearFailureTest do
                {:default, :consumer, %{}},
                {:default, :other, %{}}
              ]) == received
-    end
-
-    test "is not given orphaned keys", %{wf: wf} do
-      reduced = Workflow.add_rule(Workflow.new(), :other, failing_rule())
-
-      capture_log(fn ->
-        wf = roundtrip(wf, reduced)
-        {pid, pred} = mock_fun(100, fn _ -> true end)
-
-        assert {:ok, _} = Workflow.clear_failure(wf, pred)
-        assert [[{:default, :other, %{}}]] == calls(pid)
-      end)
     end
   end
 

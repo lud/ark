@@ -540,8 +540,8 @@ defmodule Ark.Workflow.GraphBuildingTest do
       wf = run!(wf, [{NsA, :a, %{}}])
       assert 1 == fetch!(wf, {NsA, :a, %{}})
 
-      assert {:error, %GraphError{reason: {:unknown_rule, {:default, :a, %{}}}}} =
-               Workflow.fetch(wf, :a)
+      assert {:error, %GraphError{reason: {:unknown_rule, {:default, :a, %{}}}}, _} =
+               Workflow.run(wf, [:a])
     end
 
     test "resolves the dependencies written without namespace in those rules to its namespace" do
@@ -620,19 +620,19 @@ defmodule Ark.Workflow.GraphBuildingTest do
       wf = run!(nested_graph(), [{NsB, :inner, %{}}])
       assert %{leaf: :leaf_b} == fetch!(wf, {NsB, :inner, %{}})
 
-      assert {:error, %GraphError{reason: {:unknown_rule, {NsA, :inner, %{}}}}} =
-               Workflow.fetch(wf, {NsA, :inner, %{}})
+      assert {:error, %GraphError{reason: {:unknown_rule, {NsA, :inner, %{}}}}, _} =
+               Workflow.run(wf, [{NsA, :inner, %{}}])
     end
 
     test "restore the enclosing namespace when the inner callback returns" do
       wf = run!(nested_graph(), [{NsA, :after, %{}}])
       assert %{leaf: :leaf_a} == fetch!(wf, {NsA, :after, %{}})
 
-      assert {:error, %GraphError{reason: {:unknown_rule, {NsB, :after, %{}}}}} =
-               Workflow.fetch(wf, {NsB, :after, %{}})
+      assert {:error, %GraphError{reason: {:unknown_rule, {NsB, :after, %{}}}}, _} =
+               Workflow.run(wf, [{NsB, :after, %{}}])
 
-      assert {:error, %GraphError{reason: {:unknown_rule, {:default, :after, %{}}}}} =
-               Workflow.fetch(wf, :after)
+      assert {:error, %GraphError{reason: {:unknown_rule, {:default, :after, %{}}}}, _} =
+               Workflow.run(wf, [:after])
     end
 
     test "resolve the dependencies written without namespace to the namespace of each rule" do
