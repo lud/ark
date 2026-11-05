@@ -12,14 +12,6 @@ defmodule Ark.Workflow.Codec do
     end
   end
 
-  def etf?(%{"json" => 0}) do
-    true
-  end
-
-  def etf?(_) do
-    false
-  end
-
   def decode(%{"json" => 1, "data" => data}) do
     data
   end

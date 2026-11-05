@@ -8,7 +8,6 @@ defmodule Ark.Workflow do
             values: %{},
             failed: %{},
             attempts: %{},
-            dump_check: false,
             call_wrapper: nil
 
   @type t :: %__MODULE__{}
@@ -21,16 +20,15 @@ defmodule Ark.Workflow do
     opts =
       Ark.Opts.validate!(
         opts,
-        %{dump_check: false, call_wrapper: nil},
+        %{call_wrapper: nil},
         [subject: "Ark.Workflow.new/1"],
         fn
-          :dump_check, value -> Ark.Opts.boolean(value)
           :call_wrapper, value -> call_wrapper_opt(value)
           _, _ -> :unknown
         end
       )
 
-    %__MODULE__{dump_check: opts.dump_check, call_wrapper: opts.call_wrapper}
+    %__MODULE__{call_wrapper: opts.call_wrapper}
   end
 
   def clear_failure(%__MODULE__{} = wf, predicate) when is_function(predicate, 1) do

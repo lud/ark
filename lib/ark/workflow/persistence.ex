@@ -1,8 +1,6 @@
 defmodule Ark.Workflow.Persistence do
   @moduledoc false
 
-  require Logger
-
   alias Ark.Workflow
   alias Ark.Workflow.Codec
   alias Ark.Workflow.CodecError
@@ -22,40 +20,24 @@ defmodule Ark.Workflow.Persistence do
     keys =
       Enum.uniq(Map.keys(wf.values) ++ Map.keys(wf.failed) ++ Map.keys(wf.attempts))
 
-    {entries, etf_keys} =
-      Enum.map_reduce(keys, [], fn key, etf_keys ->
-        {entry, etf?} = dump_entry(wf, key)
+    entries = keys |> Enum.map(&dump_entry(wf, &1)) |> Enum.sort()
 
-        {entry, add_if(etf?, key, etf_keys)}
-      end)
-
-    warn_etf(wf, etf_keys)
-
-    {:ok, %{"version" => @version, "entries" => Enum.sort(entries)}}
+    {:ok, %{"version" => @version, "entries" => entries}}
   catch
     {:codec_error, error} -> {:error, error}
-  end
-
-  defp add_if(true, key, keys) do
-    [key | keys]
-  end
-
-  defp add_if(false, _key, keys) do
-    keys
   end
 
   defp dump_entry(wf, {ns, name, params} = key) do
     base = %{"ns" => str(ns), "name" => str(name), "params" => Codec.encode(params)}
     rule = Map.fetch!(wf.rules, {ns, name})
 
-    {entry, etf?} =
+    entry =
       case wf.values do
         %{^key => value} ->
-          encoded = Codec.encode(dump_value(rule.dump, value, key))
-          {Map.put(base, "value", encoded), Codec.etf?(encoded)}
+          Map.put(base, "value", Codec.encode(dump_value(rule.dump, value, key)))
 
         _ ->
-          {base, false}
+          base
       end
 
     entry =
@@ -72,14 +54,11 @@ defmodule Ark.Workflow.Persistence do
       end)
       |> Enum.sort()
 
-    entry =
-      if attempts == [] do
-        entry
-      else
-        Map.put(entry, "attempts", attempts)
-      end
-
-    {entry, etf?}
+    if attempts == [] do
+      entry
+    else
+      Map.put(entry, "attempts", attempts)
+    end
   end
 
   defp dump_value(dump, value, key) do
@@ -144,17 +123,6 @@ defmodule Ark.Workflow.Persistence do
 
   defp str(term) when is_binary(term) do
     term
-  end
-
-  defp warn_etf(%{dump_check: true}, [_ | _] = keys) do
-    Logger.warning(
-      "workflow dump: values stored as ETF instead of JSON for keys: " <>
-        Enum.map_join(Enum.sort(keys), ", ", &Workflow.format_key/1)
-    )
-  end
-
-  defp warn_etf(_, _) do
-    :ok
   end
 
   @spec codec_error!(tuple, String.t()) :: no_return
