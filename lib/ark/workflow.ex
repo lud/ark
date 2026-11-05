@@ -36,12 +36,10 @@ defmodule Ark.Workflow do
   end
 
   def clear_failure(%__MODULE__{} = wf, key) do
-    with {:ok, key} <- check_target(wf, key) do
-      if is_map_key(wf.failed, key) do
-        clear([key], wf)
-      else
-        {:error, :not_failed}
-      end
+    case check_target(wf, key) do
+      {:ok, key} when is_map_key(wf.failed, key) -> clear([key], wf)
+      {:ok, _} -> {:error, :not_failed}
+      {:error, e} -> raise e
     end
   end
 
