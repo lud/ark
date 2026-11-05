@@ -3,7 +3,6 @@ defmodule Ark.Workflow.DumpLoadTest do
 
   import Ark.Test.Mock
   import Ark.Test.WorkflowHelpers
-  import ExUnit.CaptureLog
 
   alias Ark.Workflow
   alias Ark.Workflow.CodecError
@@ -36,10 +35,6 @@ defmodule Ark.Workflow.DumpLoadTest do
   defp dump!(wf) do
     assert {:ok, data} = Workflow.dump(wf)
     data
-  end
-
-  defp warnings(log) do
-    length(Regex.scan(~r/\[warning\]/, log))
   end
 
   defp sample_terms do
@@ -704,58 +699,5 @@ defmodule Ark.Workflow.DumpLoadTest do
 
     verify(pid)
     assert [[%{}, %{}, %{other: 2}]] == calls(pid)
-  end
-
-  describe "dump check" do
-    test "with the dump check enabled, dump emits a single warning listing every key whose :dump output is stored as ETF" do
-      wf =
-        Workflow.new(dump_check: true)
-        |> Workflow.add_rule(:etf_value_one, const_rule(%{atom_key: 1}))
-        |> Workflow.add_rule(:etf_value_two, const_rule({:tuple}))
-        |> Workflow.add_rule(:json_value, const_rule(%{"k" => [1, "x", nil]}))
-        |> Workflow.add_rule(:etf_dumped_as_json, %{
-          alts: [default: %{deps: [], body: ok_body(%{atom_key: 1})}],
-          dump: fn %{atom_key: v} -> %{"atom_key" => v} end,
-          load: fn %{"atom_key" => v} -> %{atom_key: v} end
-        })
-
-      wf =
-        run!(wf, [
-          :etf_value_one,
-          {:etf_value_two, %{id: 1}},
-          :json_value,
-          :etf_dumped_as_json
-        ])
-
-      log = capture_log(fn -> assert {:ok, _} = Workflow.dump(wf) end)
-
-      assert 1 == warnings(log)
-      assert log =~ "etf_value_one"
-      assert log =~ "{:etf_value_two, %{id: 1}}"
-      refute log =~ "json_value"
-      refute log =~ "etf_dumped_as_json"
-    end
-
-    test "with the dump check enabled and only JSON-native values, dump emits no warning" do
-      wf =
-        Workflow.new(dump_check: true)
-        |> Workflow.add_rule(:a, const_rule(%{"k" => [1, 2.5, "x", nil, true]}))
-        |> Workflow.add_rule(:b, failing_rule())
-
-      wf = run!(wf, [{:a, %{atom: :params}}])
-      {:error, _, wf} = Workflow.run(wf, [:b])
-
-      log = capture_log(fn -> assert {:ok, _} = Workflow.dump(wf) end)
-      assert 0 == warnings(log)
-    end
-
-    test "with the dump check disabled, dump emits no warning" do
-      for wf <- [Workflow.new(), Workflow.new(dump_check: false)] do
-        wf = wf |> Workflow.add_rule(:a, const_rule(%{atom_key: 1})) |> run!([:a])
-
-        log = capture_log(fn -> assert {:ok, _} = Workflow.dump(wf) end)
-        assert 0 == warnings(log)
-      end
-    end
   end
 end

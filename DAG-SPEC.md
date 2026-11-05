@@ -756,7 +756,7 @@ Invariants:
 ## 9. Engine API and lifecycle
 
 ```
-new(opts)                              :: workflow                   # call wrapper, dump check (§10)
+new(opts)                              :: workflow                   # call wrapper
 add_rule(workflow, identity, rule)     :: workflow                   # identity: name | {ns, name}
 add_ns(workflow, ns, callback)         :: workflow
 run(workflow, targets, opts)           :: {:ok, workflow} | {:error, error, workflow}
@@ -1208,13 +1208,6 @@ A struct stored through ETF decodes with the fields it had at dump time.
 A rule whose value struct changes shape across deploys declares `:dump`
 and `:load`.
 
-### Dump check
-
-A workflow option of `new` (for development) makes `dump` check every value once,
-collect the keys whose `:dump` output was stored as ETF, and emit a
-single warning listing them. Such values are valid but cannot be queried
-in storage.
-
 ## 11. Resume semantics (summary)
 
 Resume is: build the rules (from code, or a module attribute) → `load`
@@ -1272,8 +1265,8 @@ the dump into that workflow (validate, decode) → `run`. Then:
 
 Requirements the test suite must express. Each one is observed through the
 API (§9): values and errors returned, calls made to user code (mocks,
-call wrappers), warnings emitted. None of them inspects the internal shape
-of the state or the dump format (§8).
+call wrappers). None of them inspects the internal shape of the state or
+the dump format (§8).
 
 Tests marked *(fixed dump)* need a dump built by hand. They are written
 once the dump format is fixed. Tests marked *(operations)* need to stop a
@@ -1821,14 +1814,6 @@ helpers in `test/support` are left to the implementor.
   - ...for an alternative name that does not exist as an atom: it stays
     a string
   - ...for params referencing an atom that does not exist: a codec error
-
-### Dump check (§10)
-
-- With the dump check enabled, `dump` emits a single warning listing every
-  key whose `:dump` output is stored as ETF
-- With the dump check enabled and only JSON-native values, `dump` emits no
-  warning
-- With the dump check disabled, `dump` emits no warning
 
 ### Clearing failures (§9)
 
