@@ -1258,21 +1258,38 @@ the dump into that workflow (validate, decode) → `run`. Then:
   separation between what raises and what is returned: once the code is
   set up properly, a call that passes its arguments correctly must never
   raise. Go over every place that produces a graph error (§9, Errors)
-  and decide, for each, whether it raises or is returned. The goal is to
-  raise for every mistake in the code:
-  - `add_rule` and `add_ns` raise already;
-  - `fetch`, `attempts`, `failures` and `clear_failure` raise already for
-    the keys they are given;
-  - `run` returns, before evaluation, the unknown rules of static
-    dependencies and the invalid targets: candidates to raise.
+  and make it follow this rule:
+  - `add_rule` and `add_ns` raise;
+  - `fetch`, `attempts`, `failures` and `clear_failure` raise for the
+    keys they are given;
+  - `run` never raises because of the graph: every graph error it finds,
+    before or during evaluation, is returned. A bad static key and the
+    same bad key returned by a dependency function give the same result.
+- **`check(workflow)`: an opt-in graph check.** Checking the whole graph
+  on every run costs CPU and memory that are wasted once the code is
+  right, and the check cannot be complete when dependency functions
+  exist. A separate function checks what is static, for a test or a CI
+  step to call once:
+  - `:ok` when the graph has no dependency function and is valid;
+  - `{:error, graph_error}` for an error among the static parts:
+    unknown rule of a static dependency, cycle between static
+    dependencies only. An error is returned even when the graph has
+    dependency functions;
+  - `{:unverified, [{rule, alternative}]}` when the static parts are
+    valid, listing the alternatives with dependency functions, which
+    only a run can verify.
 
-  The errors found during evaluation come from what dependency functions
-  return, so they depend on the data: `{:bad_return, :deps, ...}`, a
-  shadowing involving a returned key, a cycle. They stay returned, and
-  may become their own error family, distinct from the graph error, so
-  that a graph error always means a mistake in the code. Whether a cycle
-  between static dependencies only is found before evaluation, and
-  raises, is part of the task.
+  `run` may share this check before evaluation: an error stops the run,
+  `:ok` and `:unverified` both let it proceed. Whether `run` checks the
+  whole graph, only what its targets can reach, or nothing before
+  evaluation is part of the task, weighed against the cost above.
+- **Errors from dependency functions.** The errors found during
+  evaluation come from what dependency functions return, so they depend
+  on the data: `{:bad_return, :deps, ...}`, a shadowing involving a
+  returned key, a cycle through a returned key. Decide whether they stay
+  graph errors, become their own error family, or fail the alternative
+  like a body returning an invalid value (§7), so that a graph error
+  always means a mistake found without data.
 
 ## 13. Differences from v1 (removal list)
 
