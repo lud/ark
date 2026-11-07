@@ -386,7 +386,6 @@ defmodule Ark.Workflow.DependencyFunctionsTest do
         })
 
       wf = run!(wf, [:r])
-
       verify(pid)
       assert :r2 == fetch!(wf, :r)
       assert {:ok, %{r1: {:computation_error, cleaned}}} = Workflow.attempts(wf, :r)
