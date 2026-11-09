@@ -39,6 +39,7 @@ defmodule Ark.Workflow.Codec do
     :error
   end
 
+  # sobelow_skip ["Misc.BinToTerm"]
   defp binary_to_term(bin) do
     {:ok, :erlang.binary_to_term(bin, [:safe])}
   rescue
