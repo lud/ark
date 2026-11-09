@@ -16,6 +16,12 @@ defmodule Ark.Workflow.CodecError do
   alias Ark.Workflow.GraphError
 
   @enforce_keys [:direction, :reason]
+  @type t :: %__MODULE__{
+          direction: :dump | :load,
+          key: Ark.Workflow.full_key() | nil,
+          reason: term()
+        }
+
   defexception [:key, :reason, :direction]
 
   @impl true

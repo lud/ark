@@ -21,6 +21,13 @@ defmodule Ark.Workflow.GraphError do
     when known.
   """
 
+  @type t :: %__MODULE__{
+          rule: {Ark.Workflow.namespace(), Ark.Workflow.name()} | nil,
+          key: Ark.Workflow.full_key() | nil,
+          alternative: Ark.Workflow.name() | nil,
+          reason: term()
+        }
+
   defexception [:rule, :key, :alternative, :reason]
 
   @impl true

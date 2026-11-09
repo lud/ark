@@ -293,6 +293,7 @@ defmodule Ark.Workflow do
   """
 
   alias Ark.Workflow.ClearFailure
+  alias Ark.Workflow.CodecError
   alias Ark.Workflow.ComputationError
   alias Ark.Workflow.GraphError
   alias Ark.Workflow.Persistence
@@ -302,6 +303,55 @@ defmodule Ark.Workflow do
             ns: :default,
             call_wrapper: nil,
             store: %{results: %{}, attempts: %{}}
+
+  @type name :: atom()
+  @type namespace :: atom()
+  @type params :: map()
+  @type identity :: name() | {namespace(), name()}
+  @type full_key :: {namespace(), name(), params()}
+  @type key :: name() | {name(), params()} | full_key()
+  @type context :: term()
+  @type mfargs :: {module(), atom(), [term()]}
+  @type deps :: %{optional(term()) => term()}
+  @type alias_map :: %{optional(term()) => key()}
+  @type body ::
+          (params(), deps(), context() -> {:ok, term()} | {:error, term()}) | mfargs()
+  @type dependency_function ::
+          (params(), deps(), context() -> key() | [key()] | alias_map()) | mfargs()
+  @type dependency :: key() | alias_map() | dependency_function()
+  @type alternative :: %{deps: [dependency()], body: body()}
+  @type alternatives :: [{name(), alternative()}, ...]
+  @type codec :: (term() -> term()) | mfargs()
+  @type rule :: %{
+          required(:alts) => alternatives(),
+          optional(:dump) => codec(),
+          optional(:load) => codec()
+        }
+  @type call :: mfargs() | {function(), [term()]}
+  @type call_meta :: %{key: full_key(), alternative: name()}
+  @type call_wrapper :: (:computation | :deps, call_meta(), call() -> term()) | mfargs()
+  @type computation_error :: %{
+          kind: :user_term | :bad_return | :error | :throw | :exit,
+          reason: term(),
+          message: String.t(),
+          stacktrace: String.t() | nil,
+          at: DateTime.t()
+        }
+  @type failure_record ::
+          {:dep_failed, full_key()} | {:computation_error, computation_error()}
+  @type result :: {:ok, term()} | {:failed, {:all_alternatives_failed, [name()]}}
+  @type attempts :: %{optional(name()) => failure_record()}
+  @type dump_data :: %{String.t() => term()}
+
+  @type t :: %__MODULE__{
+          rules: %{optional({namespace(), name()}) => rule()},
+          ns: namespace(),
+          call_wrapper: call_wrapper() | nil,
+          store: %{
+            results: %{optional(full_key()) => result()},
+            attempts: %{optional(full_key()) => attempts()}
+          }
+        }
 
   defguardp is_name(term) when is_atom(term) and term not in [nil, true, false]
 
@@ -382,6 +432,7 @@ defmodule Ark.Workflow do
   @doc """
   Returns an empty workflow, with no rules and no recorded state.
   """
+  @spec new() :: t()
   def new do
     new([])
   end
@@ -398,6 +449,7 @@ defmodule Ark.Workflow do
 
   Raises an `Ark.Opts.Error` for an unknown option or an invalid value.
   """
+  @spec new(keyword() | map()) :: t()
   def new(opts) do
     opts =
       Ark.Opts.validate!(
@@ -438,7 +490,7 @@ defmodule Ark.Workflow do
   name registers the rule in the current namespace: `:default`, or the namespace
   given to `add_ns/3` when called from within its callback.
 
-  The rule is a map with the following keys:
+  The rule is a map of type `t:rule/0`, with the following keys:
 
   * `:alts` - a non-empty keyword list of alternatives, tried in order. Each
     alternative is a map with a `:deps` list and a `:body` function. `rule/2`
@@ -470,6 +522,7 @@ defmodule Ark.Workflow do
         |> Map.put(:load, fn url -> MyApp.Db.Conn.reconnect(url) end)
       )
   """
+  @spec add_rule(t(), identity(), rule()) :: t()
   def add_rule(%__MODULE__{} = wf, identity, rule) do
     identity = normalize_identity!(identity, wf)
     rule = validate_rule!(rule, identity)
@@ -515,6 +568,7 @@ defmodule Ark.Workflow do
       iex> Ark.Workflow.fetch(wf, {MyApp.Geo, :lookup, %{}})
       {:ok, {48.85, 2.35}}
   """
+  @spec add_ns(t(), namespace(), (t() -> t())) :: t()
   def add_ns(%__MODULE__{}, new_ns, _callback) when not is_name(new_ns) do
     raise GraphError, reason: {:invalid_namespace, new_ns}
   end
@@ -556,6 +610,7 @@ defmodule Ark.Workflow do
         ]
       }
   """
+  @spec rule(alternatives() | body()) :: rule()
   def rule(alts) when is_list(alts) do
     %{alts: alts}
   end
@@ -582,6 +637,7 @@ defmodule Ark.Workflow do
         ]
       }
   """
+  @spec rule([dependency()], body()) :: rule()
   def rule(deps, body) do
     %{alts: [default: alt(deps, body)]}
   end
@@ -597,6 +653,7 @@ defmodule Ark.Workflow do
       iex> Ark.Workflow.alt({MyApp.Rules, :answer, []})
       %{deps: [], body: {MyApp.Rules, :answer, []}}
   """
+  @spec alt(body()) :: alternative()
   def alt(body) do
     alt([], body)
   end
@@ -613,6 +670,7 @@ defmodule Ark.Workflow do
       iex> Ark.Workflow.alt([:config, {:rate, %{currency: "EUR"}}], {MyApp.Rules, :price, []})
       %{deps: [:config, {:rate, %{currency: "EUR"}}], body: {MyApp.Rules, :price, []}}
   """
+  @spec alt([dependency()], body()) :: alternative()
   def alt(deps, body) do
     %{deps: deps, body: body}
   end
@@ -933,6 +991,8 @@ defmodule Ark.Workflow do
       iex> Ark.Workflow.fetch(wf, {:user, %{id: 1}})
       {:ok, "Alice"}
   """
+  @spec run(t(), [key()], keyword() | map()) ::
+          {:ok, t()} | {:error, ComputationError.t() | GraphError.t(), t()}
   def run(%__MODULE__{} = wf, targets, opts \\ []) when is_list(targets) do
     %{store: store, rules: rules} = wf
 
@@ -1298,6 +1358,7 @@ defmodule Ark.Workflow do
       iex> Ark.Workflow.invoke({fn a, b -> a + b end, [1, 2]})
       3
   """
+  @spec invoke(call()) :: term()
   def invoke({m, f, args}) do
     apply(m, f, args)
   end
@@ -1352,6 +1413,7 @@ defmodule Ark.Workflow do
   The key is read in the `:default` namespace when written as a bare name or
   `{name, params}`. Raises an `Ark.Workflow.GraphError` for a malformed key.
   """
+  @spec fetch(t(), key()) :: result() | :error
   def fetch(%__MODULE__{} = wf, key) do
     full_key = read_key!(key)
 
@@ -1372,6 +1434,7 @@ defmodule Ark.Workflow do
   The key is read in the `:default` namespace when written as a bare name or
   `{name, params}`. Raises an `Ark.Workflow.GraphError` for a malformed key.
   """
+  @spec attempts(t(), key()) :: attempts()
   def attempts(%__MODULE__{} = wf, key) do
     Map.get(wf.store.attempts, read_key!(key), %{})
   end
@@ -1402,6 +1465,8 @@ defmodule Ark.Workflow do
       %{default: {:dep_failed, {:default, :token, %{}}}}
       iex> %{default: {:computation_error, %{kind: :user_term, reason: :unauthorized}}} = blame[{:default, :token, %{}}]
   """
+  @spec blame(t(), key()) ::
+          {:ok, %{optional(full_key()) => attempts()}} | {:error, :not_failed}
   def blame(%__MODULE__{} = wf, key) do
     full_key = read_key!(key)
 
@@ -1465,6 +1530,8 @@ defmodule Ark.Workflow do
       iex> Ark.Workflow.fetch(wf, :flaky)
       {:ok, :done}
   """
+  @spec clear_failure(t(), key() | (full_key() -> as_boolean(term()))) ::
+          {:ok, t()} | {:error, :not_failed}
   def clear_failure(%__MODULE__{} = wf, pred) when is_function(pred, 1) do
     roots =
       for {k, {:failed, _}} <- wf.store.results, pred.(k) do
@@ -1518,6 +1585,7 @@ defmodule Ark.Workflow do
       iex> Ark.Workflow.fetch(wf, :answer)
       {:ok, 42}
   """
+  @spec dump(t()) :: {:ok, dump_data()} | {:error, CodecError.t()}
   def dump(%__MODULE__{} = wf) do
     Persistence.dump(wf.rules, wf.store)
   end
@@ -1535,6 +1603,7 @@ defmodule Ark.Workflow do
   malformed data, data describing rules that are not registered, atoms that do
   not exist, or a `:load` callback that fails.
   """
+  @spec load(t(), term()) :: {:ok, t()} | {:error, CodecError.t()}
   def load(%__MODULE__{} = wf, data) do
     with {:ok, store} <- Persistence.load(wf.rules, data) do
       {:ok, %{wf | store: store}}

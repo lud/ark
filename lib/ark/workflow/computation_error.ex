@@ -10,6 +10,8 @@ defmodule Ark.Workflow.ComputationError do
   alias Ark.Workflow.GraphError
 
   @enforce_keys [:target]
+  @type t :: %__MODULE__{target: Ark.Workflow.full_key()}
+
   defexception [:target]
 
   @impl true
