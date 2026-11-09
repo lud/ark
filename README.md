@@ -132,6 +132,27 @@ put_in(s.k, 2)
 
 Helpers to work with numerical timeout values
 
+### `Ark.Workflow`
+
+This module computes values from rules with ordered fallback alternatives,
+dependencies between rules, namespaces, and a state that persists across
+runs.
+
+```elixir
+import Ark.Workflow, only: [rule: 1, rule: 2]
+
+wf =
+  Ark.Workflow.new()
+  |> Ark.Workflow.add_rule(:config, rule(fn _params, _deps, _ctx -> {:ok, read_config()} end))
+  |> Ark.Workflow.add_rule(:report, rule([:config], fn params, %{config: config}, _ctx ->
+    {:ok, build_report(config, params.month)}
+  end))
+
+key = {:report, %{month: 11}}
+{:ok, wf} = Ark.Workflow.run(wf, [key])
+{:ok, report} = Ark.Workflow.fetch(wf, key)
+```
+
 <!-- rdmx /ark:plugins -->
 
 

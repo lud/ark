@@ -1,0 +1,859 @@
+defmodule Ark.Workflow.DumpLoadTest do
+  use ExUnit.Case, async: true
+
+  import Ark.Test.Mock
+  import Ark.Test.WorkflowHelpers
+
+  alias Ark.Workflow
+  alias Ark.Workflow.CodecError
+  alias Ark.Workflow.ComputationError
+  alias Ark.Workflow.GraphError
+
+  defmodule NsA do
+  end
+
+  defmodule SomeStruct do
+    defstruct [:id, :data]
+  end
+
+  def tuple_dump(value, extra) do
+    %{"dumped" => inspect({value, extra})}
+  end
+
+  def tuple_load(%{"dumped" => s}, extra) do
+    {:loaded, s, extra}
+  end
+
+  defp key(name, params) do
+    {:default, name, params}
+  end
+
+  defp json(data) do
+    data |> JSON.encode!() |> JSON.decode!()
+  end
+
+  defp dump!(wf) do
+    assert {:ok, data} = Workflow.dump(wf)
+    data
+  end
+
+  defp with_missing_atom(data, term) do
+    etf = :erlang.term_to_binary(term, [:deterministic])
+    missing = :binary.replace(etf, "abcabc", "q" <> "zxwvu")
+    encoded = JSON.encode!(data)
+    assert encoded =~ Base.encode64(etf)
+
+    encoded
+    |> String.replace(Base.encode64(etf), Base.encode64(missing))
+    |> JSON.decode!()
+  end
+
+  defp update_entry(data, fun) do
+    %{"entries" => [entry]} = data
+    %{data | "entries" => [fun.(entry)]}
+  end
+
+  defp sample_terms do
+    [
+      "string",
+      "",
+      42,
+      -1.5,
+      true,
+      false,
+      nil,
+      [1, "two", nil],
+      %{"a" => [1, %{"b" => 2}]},
+      :atom,
+      %{atom_key: 1},
+      {:tuple, 1, "x"},
+      %SomeStruct{id: 1, data: [:a]},
+      ~D[2024-01-02],
+      ~U[2024-01-02 03:04:05.123456Z],
+      <<0xFF, 0xFE, 0>>,
+      <<1::3>>,
+      [1 | 2],
+      [1, 2 | :tail],
+      %{1 => "integer key", {:t} => "tuple key"},
+      %{"mixed" => %{atom: [{1, 2.5}]}}
+    ]
+  end
+
+  describe "dump" do
+    test "produces data that encodes to JSON, and loading the decoded JSON restores the state" do
+      {pid, body} = mock_fun(1, params_body())
+      {cpid, consumer_body} = mock_fun(1, deps_body())
+
+      graph = fn ->
+        Workflow.new()
+        |> Workflow.add_rule(:a, rule([], body))
+        |> Workflow.add_rule(:c, rule([{:a, %{id: 1}}], consumer_body))
+      end
+
+      wf = run!(graph.(), [:c])
+
+      data = dump!(wf)
+      assert is_binary(JSON.encode!(data))
+
+      wf2 = roundtrip(wf, graph.())
+      wf2 = run!(wf2, [:c])
+
+      verify(pid)
+      verify(cpid)
+      assert fetch!(wf, :c) == fetch!(wf2, :c)
+      assert %{id: 1} == fetch!(wf2, {:a, %{id: 1}})
+    end
+
+    test "does not change the workflow: it can still be run" do
+      wf =
+        Workflow.new()
+        |> Workflow.add_rule(:a, const_rule(1))
+        |> Workflow.add_rule(:b, rule([:a], deps_body()))
+
+      wf = run!(wf, [:a])
+      _ = dump!(wf)
+      wf = run!(wf, [:b])
+
+      assert %{a: 1} == fetch!(wf, :b)
+    end
+
+    test "of an empty workflow loads into an empty workflow" do
+      wf = Workflow.add_rule(Workflow.new(), :a, const_rule(1))
+      wf2 = roundtrip(wf, wf)
+      assert :error == Workflow.fetch(wf2, :a)
+    end
+  end
+
+  describe "a loaded workflow" do
+    test "can be run, and rules can still be added to it" do
+      {pid, body} = mock_fun(1, ok_body(1))
+      graph = fn -> Workflow.add_rule(Workflow.new(), :a, rule([], body)) end
+
+      wf = run!(graph.(), [:a])
+      wf = roundtrip(wf, graph.())
+
+      wf = Workflow.add_rule(wf, :b, rule([:a], deps_body()))
+      wf = run!(wf, [:b])
+
+      verify(pid)
+      assert %{a: 1} == fetch!(wf, :b)
+    end
+  end
+
+  describe "terms survive the round trip as equal terms" do
+    test "in params and in values" do
+      {pid, body} =
+        mock_fun(length(sample_terms()), fn %{term: t}, _, _ -> {:ok, {:value, t}} end)
+
+      graph = fn -> Workflow.add_rule(Workflow.new(), :a, rule([], body)) end
+      targets = Enum.map(sample_terms(), &{:a, %{term: &1}})
+
+      wf = run!(graph.(), targets)
+      wf = roundtrip(wf, graph.())
+      wf = run!(wf, targets)
+
+      verify(pid)
+
+      for term <- sample_terms() do
+        assert {:value, term} === fetch!(wf, {:a, %{term: term}})
+      end
+    end
+
+    test "as whole params and values" do
+      json_params = %{"s" => "x", "n" => [1, 2.5, nil, true], "m" => %{"k" => "v"}}
+      etf_params = %{atom: :key, struct: %SomeStruct{id: 1}, date: ~D[2024-01-01]}
+      {pid, body} = mock_fun(2, params_body())
+      graph = fn -> Workflow.add_rule(Workflow.new(), :a, rule([], body)) end
+
+      wf = run!(graph.(), [{:a, json_params}, {:a, etf_params}])
+      wf = roundtrip(wf, graph.())
+      wf = run!(wf, [{:a, json_params}, {:a, etf_params}])
+
+      verify(pid)
+      assert json_params === fetch!(wf, {:a, json_params})
+      assert etf_params === fetch!(wf, {:a, etf_params})
+    end
+  end
+
+  test ~S(%{user_id: 5} and %{"user_id" => 5} are still two keys after a round trip) do
+    {pid, body} = mock_fun(2, params_body())
+    graph = fn -> Workflow.add_rule(Workflow.new(), :a, rule([], body)) end
+    targets = [{:a, %{user_id: 5}}, {:a, %{"user_id" => 5}}]
+
+    wf = run!(graph.(), targets)
+    wf = roundtrip(wf, graph.())
+    wf = run!(wf, targets)
+
+    verify(pid)
+    assert %{user_id: 5} === fetch!(wf, {:a, %{user_id: 5}})
+    assert %{"user_id" => 5} === fetch!(wf, {:a, %{"user_id" => 5}})
+  end
+
+  test ~S(%{"id" => 1} and %{"id" => 1.0} are still two keys after a round trip through JSON) do
+    {pid, body} = mock_fun(2, params_body())
+    graph = fn -> Workflow.add_rule(Workflow.new(), :a, rule([], body)) end
+    targets = [{:a, %{"id" => 1}}, {:a, %{"id" => 1.0}}]
+
+    wf = run!(graph.(), targets)
+    wf = roundtrip(wf, graph.())
+    wf = run!(wf, targets)
+
+    verify(pid)
+    assert %{"id" => 1} === fetch!(wf, {:a, %{"id" => 1}})
+    assert %{"id" => 1.0} === fetch!(wf, {:a, %{"id" => 1.0}})
+  end
+
+  test "a body receives params after a dump and a load identical to an uninterrupted run" do
+    params = %{"id" => 1, :opt => [1, 2.0], :s => %SomeStruct{id: 3}}
+    {pid, body} = mock_fun(1, ok_body(1))
+
+    graph = fn broken ->
+      Workflow.new()
+      |> Workflow.add_rule(:a, %{
+        alts: [
+          a1: %{deps: [], body: error_body()},
+          a2: %{deps: [:broken], body: body}
+        ]
+      })
+      |> Workflow.add_rule(:broken, broken)
+    end
+
+    broken = rule([fn _, _, _ -> "invalid" end], ok_body(1))
+    {:error, %GraphError{}, wf} = Workflow.run(graph.(broken), [{:a, params}])
+    assert %{a1: _} = Workflow.attempts(wf, {:a, params})
+
+    wf = roundtrip(wf, graph.(const_rule(:fixed)))
+    wf = run!(wf, [{:a, params}])
+
+    verify(pid)
+    assert [[received, %{broken: :fixed}, %{}]] = calls(pid)
+    assert params === received
+    assert 1 == fetch!(wf, {:a, params})
+  end
+
+  test "dumping a loaded state that was not run produces the same data as the original dump, including attempt records of removed alternatives" do
+    graph = fn c_alts ->
+      Workflow.new()
+      |> Workflow.add_rule(:a, rule([:b], ok_body(1)))
+      |> Workflow.add_rule(:b, failing_rule())
+      |> Workflow.add_rule(:c, %{alts: c_alts})
+      |> Workflow.add_rule({NsA, :d}, const_rule(%{"json" => true}))
+    end
+
+    c1 = {:c1, %{deps: [], body: error_body()}}
+    c2 = {:c2, %{deps: [], body: params_body()}}
+
+    {:error, %ComputationError{}, wf} =
+      Workflow.run(graph.([c1, c2]), [{NsA, :d, %{}}, {:c, %{id: 1}}, :a])
+
+    data = json(dump!(wf))
+
+    assert {:ok, loaded} = Workflow.load(graph.([c1, c2]), data)
+    assert data == json(dump!(loaded))
+
+    assert {:ok, loaded} = Workflow.load(graph.([c2]), data)
+    assert data == json(dump!(loaded))
+  end
+
+  test "a failure record queried after a round trip equals the one before, including its time, kind and message, apart from the reason of its cleaned error" do
+    graph =
+      Workflow.new()
+      |> Workflow.add_rule(:a, %{
+        alts: [
+          user_term: %{deps: [], body: error_body(:x)},
+          bad_return: %{deps: [], body: fn _, _, _ -> :not_ok end},
+          error: %{deps: [], body: fn _, _, _ -> raise "boom" end},
+          throw: %{deps: [], body: fn _, _, _ -> throw(:thrown) end},
+          exit: %{deps: [], body: fn _, _, _ -> exit(:exited) end},
+          dep: %{deps: [{:b, %{id: 1}}], body: ok_body(1)}
+        ]
+      })
+      |> Workflow.add_rule(:b, failing_rule())
+
+    {:error, %ComputationError{}, wf} = Workflow.run(graph, [:a])
+    loaded = roundtrip(wf, graph)
+
+    assert without_reasons(Workflow.attempts(wf, :a)) == Workflow.attempts(loaded, :a)
+    assert Workflow.fetch(wf, :a) == Workflow.fetch(loaded, :a)
+
+    assert without_reasons(Workflow.attempts(wf, {:b, %{id: 1}})) ==
+             Workflow.attempts(loaded, {:b, %{id: 1}})
+  end
+
+  test "the computation error and the blame of a target that failed before a dump and a load are the same as the ones returned by the run that failed it, apart from the reason of the cleaned errors" do
+    graph =
+      Workflow.new()
+      |> Workflow.add_rule(:a, %{
+        alts: [
+          a1: %{deps: [:b], body: ok_body(1)},
+          a2: %{deps: [], body: fn _, _, _ -> raise "boom" end}
+        ]
+      })
+      |> Workflow.add_rule(:b, failing_rule(%{reason: "x"}))
+
+    {:error, %ComputationError{} = e1, wf1} = Workflow.run(graph, [:a])
+    {:error, %ComputationError{} = e2, wf2} = Workflow.run(roundtrip(wf1, graph), [:a])
+
+    assert e1 == e2
+    assert Exception.message(e1) == Exception.message(e2)
+
+    assert {:ok, blame} = Workflow.blame(wf1, :a)
+    assert 2 == map_size(blame)
+    assert {:ok, without_reasons(blame)} == Workflow.blame(wf2, :a)
+  end
+
+  test "the reason of a cleaned error is nil after a dump and a load, while its message, kind and time are unchanged" do
+    graph =
+      Workflow.add_rule(Workflow.new(), :a, %{
+        alts: [
+          user_term: %{deps: [], body: error_body(:x)},
+          bad_return: %{deps: [], body: fn _, _, _ -> :not_ok end},
+          error: %{deps: [], body: fn _, _, _ -> raise "boom" end},
+          throw: %{deps: [], body: fn _, _, _ -> throw(:thrown) end},
+          exit: %{deps: [], body: fn _, _, _ -> exit(:exited) end}
+        ]
+      })
+
+    {:error, %ComputationError{}, wf} = Workflow.run(graph, [:a])
+    loaded = roundtrip(wf, graph)
+
+    before = Workflow.attempts(wf, :a)
+    after_load = Workflow.attempts(loaded, :a)
+    assert 5 == map_size(before)
+
+    for {alt, {:computation_error, cleaned}} <- before do
+      assert cleaned.reason != nil
+
+      assert {:computation_error, %{reason: nil} = loaded_cleaned} =
+               Map.fetch!(after_load, alt)
+
+      assert Map.take(cleaned, [:at, :kind, :message]) ==
+               Map.take(loaded_cleaned, [:at, :kind, :message])
+    end
+
+    assert {:error, %ComputationError{}, loaded} = Workflow.run(loaded, [:a])
+    assert {:ok, %{{:default, :a, %{}} => alts}} = Workflow.blame(loaded, :a)
+
+    assert [nil, nil, nil, nil, nil] ==
+             (for({_, {:computation_error, cleaned}} <- alts) do
+                cleaned.reason
+              end)
+  end
+
+  test "a cleaned error whose message is not valid UTF-8 dumps to data that encodes to JSON, and its message is unchanged after a round trip" do
+    graph = Workflow.add_rule(Workflow.new(), :a, failing_rule(<<255, 0, 1>>))
+    {:error, %ComputationError{}, wf} = Workflow.run(graph, [:a])
+
+    assert %{default: {:computation_error, %{message: message}}} =
+             Workflow.attempts(wf, :a)
+
+    refute String.valid?(message)
+
+    loaded = roundtrip(wf, graph)
+
+    assert %{default: {:computation_error, %{message: ^message}}} =
+             Workflow.attempts(loaded, :a)
+  end
+
+  test "a cleaned error whose reason holds a pid or a function does not make dump fail" do
+    fun = fn -> :x end
+
+    graph =
+      Workflow.add_rule(Workflow.new(), :a, %{
+        alts: [
+          pid: %{deps: [], body: error_body({:down, self()})},
+          fun: %{deps: [], body: fn _, _, _ -> throw(fun) end}
+        ]
+      })
+
+    {:error, %ComputationError{}, wf} = Workflow.run(graph, [:a])
+
+    assert %{
+             pid: {:computation_error, %{reason: {:down, _}}},
+             fun: {:computation_error, %{reason: ^fun}}
+           } =
+             Workflow.attempts(wf, :a)
+
+    assert {:ok, _} = Workflow.dump(wf)
+    loaded = roundtrip(wf, graph)
+
+    assert %{
+             pid: {:computation_error, %{kind: :user_term, reason: nil}},
+             fun: {:computation_error, %{kind: :throw, reason: nil}}
+           } = Workflow.attempts(loaded, :a)
+  end
+
+  describe "a value containing a pid, port, reference or function" do
+    test "makes dump return a codec error naming the key" do
+      port = Port.open({:spawn, "true"}, [])
+
+      for bad <- [self(), port, make_ref(), fn -> 1 end, %{"nested" => [{:ok, self()}]}] do
+        wf = Workflow.add_rule(Workflow.new(), :a, const_rule(bad))
+        wf = run!(wf, [{:a, %{id: 1}}])
+
+        assert {:error, %CodecError{} = e} = Workflow.dump(wf)
+        assert key(:a, %{id: 1}) == e.key
+        assert Exception.message(e) =~ "{:a, %{id: 1}}"
+      end
+    end
+
+    test "makes dump return a codec error wherever it sits: under a non-string map key, as a map key, in a struct field or in an improper list tail" do
+      bads = [%{atom_key: self()}, %{self() => 1}, %SomeStruct{id: self()}, [1 | self()]]
+
+      dumped =
+        Enum.reject(bads, fn bad ->
+          wf = Workflow.add_rule(Workflow.new(), :a, const_rule(bad))
+          wf = run!(wf, [{:a, %{id: 1}}])
+          match?({:error, %CodecError{}}, Workflow.dump(wf))
+        end)
+
+      assert [] == dumped
+    end
+
+    test "dumps fine when the rule's :dump turns it into data" do
+      pid = self()
+
+      graph =
+        Workflow.add_rule(Workflow.new(), :a, %{
+          alts: [default: %{deps: [], body: ok_body(%{pid: pid, n: 1})}],
+          dump: fn %{n: n} -> %{"n" => n} end,
+          load: fn %{"n" => n} -> %{pid: nil, n: n} end
+        })
+
+      wf = run!(graph, [:a])
+      wf = roundtrip(wf, graph)
+
+      assert %{pid: nil, n: 1} == fetch!(wf, :a)
+    end
+  end
+
+  test "a rule's :dump that raises, throws, exits, or returns a pid, makes dump return a codec error naming the key" do
+    for dump_fun <- [
+          fn _ -> raise "cannot dump" end,
+          fn _ -> throw(:cannot_dump) end,
+          fn _ -> exit(:cannot_dump) end,
+          fn _ -> self() end
+        ] do
+      graph =
+        Workflow.add_rule(Workflow.new(), :a, %{
+          alts: [default: %{deps: [], body: ok_body(1)}],
+          dump: dump_fun
+        })
+
+      wf = run!(graph, [{:a, %{id: 2}}])
+
+      assert {:error, %CodecError{} = e} = Workflow.dump(wf)
+      assert key(:a, %{id: 2}) == e.key
+    end
+  end
+
+  describe "a rule's :dump and :load" do
+    test "are identity when not declared" do
+      {pid, body} =
+        mock_fun(length(sample_terms()), fn %{i: i}, _, _ ->
+          {:ok, Enum.at(sample_terms(), i)}
+        end)
+
+      graph = Workflow.add_rule(Workflow.new(), :a, rule([], body))
+      targets = Enum.map(0..(length(sample_terms()) - 1), &{:a, %{i: &1}})
+
+      wf = run!(graph, targets)
+      wf = roundtrip(wf, graph)
+
+      verify(pid)
+
+      for {term, i} <- Enum.with_index(sample_terms()) do
+        assert term === fetch!(wf, {:a, %{i: i}})
+      end
+    end
+
+    test "are applied to the rule's values: a consumer after a resume receives load(dump(value))" do
+      {dump_pid, dump_fun} = mock_fun(1, fn v -> %{"v" => v} end)
+      {load_pid, load_fun} = mock_fun(1, fn %{"v" => v} -> {:loaded, v} end)
+
+      graph =
+        Workflow.new()
+        |> Workflow.add_rule(:user, %{
+          alts: [default: %{deps: [], body: ok_body("u1")}],
+          dump: dump_fun,
+          load: load_fun
+        })
+        |> Workflow.add_rule(:consumer, rule([:user], deps_body()))
+
+      wf = run!(graph, [:user])
+      assert "u1" == fetch!(wf, :user)
+
+      wf = roundtrip(wf, graph)
+      wf = run!(wf, [:consumer])
+
+      verify(dump_pid)
+      verify(load_pid)
+      assert %{user: {:loaded, "u1"}} == fetch!(wf, :consumer)
+      assert {:loaded, "u1"} == fetch!(wf, :user)
+    end
+
+    test "apply to every alternative of the rule" do
+      graph =
+        Workflow.add_rule(Workflow.new(), :r, %{
+          alts: [
+            r1: %{
+              deps: [],
+              body: fn %{n: n}, _, _ ->
+                if n == 1 do
+                  {:ok, :r1}
+                else
+                  {:error, :x}
+                end
+              end
+            },
+            r2: %{deps: [], body: ok_body(:r2)}
+          ],
+          dump: fn v -> %{"v" => Atom.to_string(v)} end,
+          load: fn %{"v" => v} -> {:loaded, v} end
+        })
+
+      wf = run!(graph, [{:r, %{n: 1}}, {:r, %{n: 2}}])
+      wf = roundtrip(wf, graph)
+
+      assert {:loaded, "r1"} == fetch!(wf, {:r, %{n: 1}})
+      assert {:loaded, "r2"} == fetch!(wf, {:r, %{n: 2}})
+    end
+
+    test "given as tuples are called with the value, or the data, before extra_args" do
+      graph =
+        Workflow.add_rule(Workflow.new(), :a, %{
+          alts: [default: %{deps: [], body: ok_body(:v)}],
+          dump: {__MODULE__, :tuple_dump, [:dump_extra]},
+          load: {__MODULE__, :tuple_load, [:load_extra]}
+        })
+
+      wf = run!(graph, [:a])
+      wf = roundtrip(wf, graph)
+
+      assert {:loaded, inspect({:v, :dump_extra}), :load_extra} == fetch!(wf, :a)
+    end
+
+    test "are not applied to failure records" do
+      {pid, never} = mock_never(& &1)
+
+      graph =
+        Workflow.add_rule(Workflow.new(), :a, %{
+          alts: [default: %{deps: [], body: error_body(:x)}],
+          dump: never,
+          load: never
+        })
+
+      {:error, %ComputationError{}, wf} = Workflow.run(graph, [:a])
+      loaded = roundtrip(wf, graph)
+
+      verify(pid)
+      assert Workflow.fetch(wf, :a) == Workflow.fetch(loaded, :a)
+      assert without_reasons(Workflow.attempts(wf, :a)) == Workflow.attempts(loaded, :a)
+    end
+  end
+
+  test "load returns a codec error for a malformed dump" do
+    wf = Workflow.add_rule(Workflow.new(), :a, const_rule(1))
+
+    for data <- ["garbage", 123, nil, true, [], %{}, %{"entries" => []}] do
+      assert {:error, %CodecError{}} = Workflow.load(wf, data)
+    end
+
+    {:error, %ComputationError{}, failed} =
+      wf
+      |> Workflow.add_rule(:b, failing_rule())
+      |> Workflow.run([:b])
+
+    data = json(dump!(failed))
+
+    malformed = [
+      %{data | "entries" => "x"},
+      %{data | "entries" => [1]},
+      update_entry(data, &Map.put(&1, "key", "x")),
+      update_entry(data, &put_in(&1, ["key", "params"], %{"json" => 0, "data" => "%%%"})),
+      update_entry(data, &put_in(&1, ["key", "name"], 1)),
+      update_entry(data, &Map.put(&1, "result", "x")),
+      update_entry(data, &Map.put(&1, "result", %{"failed" => %{"unknown" => 1}})),
+      update_entry(data, &Map.put(&1, "attempts", [1])),
+      update_entry(
+        data,
+        &put_in(&1, ["attempts", "default", "computation_error", "at"], "x")
+      ),
+      update_entry(
+        data,
+        &put_in(&1, ["attempts", "default", "computation_error", "kind"], "x")
+      ),
+      update_entry(
+        data,
+        &put_in(&1, ["attempts", "default", "computation_error", "message"], 1)
+      )
+    ]
+
+    for data <- malformed do
+      assert {:error, %CodecError{}} = Workflow.load(failed, data)
+    end
+  end
+
+  test "load returns a codec error for a dump holding two entries for the same key, also when one entry is stored as JSON and the other as ETF" do
+    params = %{"id" => 1}
+    graph = Workflow.add_rule(Workflow.new(), :a, const_rule(1))
+    data = json(dump!(run!(graph, [{:a, params}])))
+    %{"entries" => [entry]} = data
+
+    etf_entry =
+      put_in(entry, ["key", "params"], %{
+        "json" => 0,
+        "data" => Base.encode64(:erlang.term_to_binary(params))
+      })
+
+    for entries <- [[entry, entry], [entry, etf_entry]] do
+      assert {:error, %CodecError{reason: {:duplicate_key, {:default, :a, ^params}}}} =
+               Workflow.load(graph, %{data | "entries" => entries})
+    end
+  end
+
+  test "a value whose ETF references an atom that does not exist makes load return a codec error" do
+    graph = Workflow.add_rule(Workflow.new(), :a, const_rule({:abcabc}))
+    data = graph |> run!([:a]) |> dump!() |> with_missing_atom({:abcabc})
+
+    assert {:error, %CodecError{key: {:default, :a, %{}}}} = Workflow.load(graph, data)
+  end
+
+  describe "load never creates atoms" do
+    test "for an ns or name with no registered rule: a codec error listing the identity with strings" do
+      graph = Workflow.add_rule(Workflow.new(), :a, const_rule(1))
+      data = json(dump!(run!(graph, [:a])))
+      missing = "q" <> "zxwvu"
+
+      for {field, identity} <- [{"ns", {missing, :a}}, {"name", {:default, missing}}] do
+        data = update_entry(data, &put_in(&1, ["key", field], missing))
+
+        assert {:error, %CodecError{reason: {:unknown_rules, [^identity]}}} =
+                 Workflow.load(graph, data)
+      end
+    end
+
+    test "for an alternative name that does not exist as an atom: it stays a string" do
+      graph =
+        Workflow.add_rule(Workflow.new(), :a, %{
+          alts: [a1: %{deps: [], body: error_body()}]
+        })
+
+      {:error, %ComputationError{}, wf} = Workflow.run(graph, [:a])
+      missing = "q" <> "zxwvu"
+
+      data =
+        update_entry(json(dump!(wf)), fn entry ->
+          update_in(entry, ["attempts"], fn %{"a1" => record} -> %{missing => record} end)
+        end)
+
+      assert {:ok, loaded} = Workflow.load(graph, data)
+      assert %{^missing => {:computation_error, _}} = Workflow.attempts(loaded, :a)
+    end
+
+    test "for params referencing an atom that does not exist: a codec error" do
+      graph = Workflow.add_rule(Workflow.new(), :a, const_rule(1))
+
+      data =
+        graph
+        |> run!([{:a, %{k: :abcabc}}])
+        |> dump!()
+        |> with_missing_atom(%{k: :abcabc})
+
+      assert {:error, %CodecError{}} = Workflow.load(graph, data)
+    end
+  end
+
+  test "a value whose rule's :load fails makes load return a codec error, never turning the key into a failure" do
+    graph = fn load_fun ->
+      Workflow.new()
+      |> Workflow.add_rule(:a, %{
+        alts: [default: %{deps: [], body: ok_body(1)}],
+        load: load_fun
+      })
+    end
+
+    wf = run!(graph.(& &1), [:a])
+    data = json(dump!(wf))
+
+    for load_fun <- [
+          fn _ -> raise "incompatible" end,
+          fn _ -> throw(:incompatible) end,
+          fn _ -> exit(:incompatible) end
+        ] do
+      assert {:error, %CodecError{}} = Workflow.load(graph.(load_fun), data)
+    end
+  end
+
+  describe "records of a rule that is not in the workflow" do
+    setup do
+      {pid, body} = mock_fun(1, ok_body(:computed_before))
+
+      full =
+        Workflow.new()
+        |> Workflow.add_rule(:kept, const_rule(:kept))
+        |> Workflow.add_rule(:removed_rule, rule([], body))
+        |> Workflow.add_rule({NsA, :other_removed}, failing_rule())
+
+      {:error, %ComputationError{}, wf} =
+        Workflow.run(full, [:kept, :removed_rule, {NsA, :other_removed, %{id: 1}}])
+
+      reduced = Workflow.add_rule(Workflow.new(), :kept, const_rule(:kept))
+
+      %{data: json(dump!(wf)), reduced: reduced, pid: pid}
+    end
+
+    test "make load return a codec error listing every such rule, for a key with a value and for a failed key",
+         %{data: data, reduced: reduced} do
+      assert {:error, %CodecError{reason: {:unknown_rules, rules}}} =
+               Workflow.load(reduced, data)
+
+      assert Enum.sort([{:default, :removed_rule}, {NsA, :other_removed}]) ==
+               Enum.sort(rules)
+    end
+
+    test "make load return the same codec error when their params reference an atom that does not exist" do
+      ghost = Workflow.add_rule(Workflow.new(), :ghost, const_rule(1))
+
+      data =
+        ghost
+        |> run!([{:ghost, %{k: :abcabc}}])
+        |> dump!()
+        |> with_missing_atom(%{k: :abcabc})
+
+      assert {:error, %CodecError{reason: {:unknown_rules, [{:default, :ghost}]}}} =
+               Workflow.load(Workflow.new(), data)
+    end
+
+    test "make load return the same codec error for a key with attempts but no result",
+         %{reduced: reduced} do
+      full =
+        Workflow.add_rule(reduced, :in_progress, %{
+          alts: [
+            p1: %{deps: [], body: error_body()},
+            p2: %{deps: [fn _, _, _ -> "invalid" end], body: ok_body(1)}
+          ]
+        })
+
+      {:error, %GraphError{}, wf} = Workflow.run(full, [:in_progress])
+      assert :error == Workflow.fetch(wf, :in_progress)
+
+      assert {:error, %CodecError{reason: {:unknown_rules, [{:default, :in_progress}]}}} =
+               Workflow.load(reduced, json(dump!(wf)))
+    end
+
+    test "are loaded into a workflow with a rule registered under the same identity, also a rule with other alternatives and a body that raises",
+         %{data: data, reduced: reduced, pid: pid} do
+      stub = %{alts: [stub: %{deps: [], body: fn _, _, _ -> raise "not called" end}]}
+      failed = {NsA, :other_removed, %{id: 1}}
+
+      stubbed =
+        reduced
+        |> Workflow.add_rule(:removed_rule, stub)
+        |> Workflow.add_rule({NsA, :other_removed}, stub)
+
+      assert {:ok, loaded} = Workflow.load(stubbed, data)
+      assert {:ok, :computed_before} == Workflow.fetch(loaded, :removed_rule)
+      assert {:failed, _} = Workflow.fetch(loaded, failed)
+
+      loaded = run!(loaded, [:removed_rule])
+      assert {:error, %ComputationError{}, loaded} = Workflow.run(loaded, [failed])
+
+      attempts = Workflow.attempts(loaded, failed)
+      assert [:default] == Map.keys(attempts)
+      verify(pid)
+    end
+  end
+
+  describe "dependency functions after a resume" do
+    test "are not called once the key has a value" do
+      {pid, deps_fun} = mock_fun(100, fn _, _, _ -> :a end)
+
+      graph =
+        Workflow.new()
+        |> Workflow.add_rule(:a, const_rule(1))
+        |> Workflow.add_rule(:r, rule([deps_fun], deps_body()))
+        |> Workflow.add_rule(:consumer, rule([:r], deps_body()))
+
+      wf = run!(graph, [:r])
+      count = length(calls(pid))
+
+      wf = roundtrip(wf, graph)
+      wf = run!(wf, [:consumer])
+
+      assert count == length(calls(pid))
+      assert %{r: %{a: 1}} == fetch!(wf, :consumer)
+    end
+
+    test "are called again with the loaded values" do
+      {pid, deps_fun} = mock_fun(100, fn _, %{a: a}, _ -> {:b, %{a: a}} end)
+
+      graph = fn broken_rule ->
+        Workflow.new()
+        |> Workflow.add_rule(:a, %{
+          alts: [default: %{deps: [], body: ok_body(%{id: 1})}],
+          dump: fn %{id: id} -> %{"id" => id} end,
+          load: fn %{"id" => id} -> %{id: id, loaded: true} end
+        })
+        |> Workflow.add_rule(:b, rule([], params_body()))
+        |> Workflow.add_rule(:broken, broken_rule)
+        |> Workflow.add_rule(:r, rule([:a, :broken, deps_fun], deps_body()))
+      end
+
+      broken = rule([fn _, _, _ -> "invalid" end], ok_body(1))
+      {:error, %GraphError{}, wf} = Workflow.run(graph.(broken), [:r])
+      assert [] == calls(pid)
+
+      wf = roundtrip(wf, graph.(const_rule(:fixed)))
+      wf = run!(wf, [:r])
+
+      loaded_a = %{id: 1, loaded: true}
+      assert [[%{}, %{a: ^loaded_a, broken: :fixed}, %{}] | _] = calls(pid)
+
+      assert %{:a => loaded_a, :broken => :fixed, {:b, %{a: loaded_a}} => %{a: loaded_a}} ==
+               fetch!(wf, :r)
+    end
+  end
+
+  test "after a graph error from a dependency function, a run with fixed code continues without calling the user code of recorded keys again" do
+    {a_pid, a_body} = mock_fun(1, ok_body(:va))
+    {f_pid, first_body} = mock_fun(1, error_body())
+
+    graph = fn deps_fun ->
+      Workflow.new()
+      |> Workflow.add_rule(:a, rule([], a_body))
+      |> Workflow.add_rule(:b, const_rule(:vb))
+      |> Workflow.add_rule(:r, %{
+        alts: [
+          r1: %{deps: [], body: first_body},
+          r2: %{deps: [:a, deps_fun], body: deps_body()}
+        ]
+      })
+    end
+
+    {:error, %GraphError{}, wf} = Workflow.run(graph.(fn _, _, _ -> "invalid" end), [:r])
+
+    wf = roundtrip(wf, graph.(fn _, _, _ -> :b end))
+    wf = run!(wf, [:r])
+
+    verify(a_pid)
+    verify(f_pid)
+    assert %{a: :va, b: :vb} == fetch!(wf, :r)
+  end
+
+  test "context is not persisted: after a load, user code sees only the context given to the run" do
+    {pid, body} = mock_fun(1, ok_body(1))
+
+    graph =
+      Workflow.new()
+      |> Workflow.add_rule(:a, const_rule(1))
+      |> Workflow.add_rule(:b, rule([], body))
+
+    wf = run!(graph, [:a], context: %{secret: 1})
+    wf = roundtrip(wf, graph)
+    _ = run!(wf, [:b], context: %{other: 2})
+
+    verify(pid)
+    assert [[%{}, %{}, %{other: 2}]] == calls(pid)
+  end
+end
