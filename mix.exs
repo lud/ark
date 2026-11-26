@@ -79,7 +79,7 @@ defmodule Ark.MixProject do
 
       # Dev & Test
       {:ecto_sqlite3, "~> 0.26.0", only: :test},
-      {:postgrex, "~> 0.22.4", only: :test},
+      {:postgrex, "~> 0.23.0", only: :test},
       {:readmix, "~> 0.7", only: [:dev, :test], runtime: false},
       {:libdev, ">= 0.0.0", only: [:dev, :test], runtime: false}
     ]
